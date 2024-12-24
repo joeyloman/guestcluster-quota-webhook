@@ -1,0 +1,251 @@
+kind: Namespace
+apiVersion: v1
+metadata:
+  name: guestcluster-quota-webhook
+  labels:
+    app: guestcluster-quota-webhook
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: guestcluster-quota-webhook
+  namespace: guestcluster-quota-webhook
+  labels:
+    app: guestcluster-quota-webhook
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: guestcluster-quota-webhook
+  labels:
+    app: guestcluster-quota-webhook
+rules:
+- apiGroups: ["certificates.k8s.io"]
+  resources: ["certificatesigningrequests"]
+  verbs: ["create", "get", "delete"]
+- apiGroups: ["certificates.k8s.io"]
+  resources: ["certificatesigningrequests/approval"]
+  verbs: ["update"]
+- apiGroups: ["certificates.k8s.io"]
+  resources: ["signers"]
+  resourceNames: ["kubernetes.io/kubelet-serving"]
+  verbs: ["approve"]
+- apiGroups: ["admissionregistration.k8s.io"]
+  resources: ["validatingwebhookconfigurations"]
+  verbs: ["create"]
+- apiGroups: ["admissionregistration.k8s.io"]
+  resources: ["validatingwebhookconfigurations"]
+  resourceNames: ["guestcluster-quota-validator"]
+  verbs: ["get", "delete", "update"]
+- apiGroups: ["provisioning.cattle.io"]
+  resources:
+  - clusters
+  verbs: ["get", "list"]
+- apiGroups: ["rke-machine-config.cattle.io"]
+  resources:
+  - harvesterconfigs
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: guestcluster-quota-webhook
+  labels:
+    app: guestcluster-quota-webhook
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: guestcluster-quota-webhook
+subjects:
+- kind: ServiceAccount
+  name: guestcluster-quota-webhook
+  namespace: guestcluster-quota-webhook
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: guestcluster-quota-webhook
+  namespace: guestcluster-quota-webhook
+  labels:
+    app: guestcluster-quota-webhook
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: guestcluster-quota-webhook
+  namespace: guestcluster-quota-webhook
+  labels:
+    app: guestcluster-quota-webhook
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: guestcluster-quota-webhook
+subjects:
+- kind: ServiceAccount
+  name: guestcluster-quota-webhook
+  namespace: guestcluster-quota-webhook
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: guestcluster-quota-webhook-cabundle
+  namespace: kube-system
+  labels:
+    app: guestcluster-quota-webhook
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["kube-root-ca.crt"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: guestcluster-quota-webhook-cabundle
+  namespace: kube-system
+  labels:
+    app: guestcluster-quota-webhook
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: guestcluster-quota-webhook-cabundle
+subjects:
+- kind: ServiceAccount
+  name: guestcluster-quota-webhook
+  namespace: guestcluster-quota-webhook
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: guestcluster-quota-webhook-kubeconfig-read
+  namespace: fleet-default
+  labels:
+    app: guestcluster-quota-webhook
+rules:
+- apiGroups: [""]
+  resources:
+  - secrets
+  verbs:
+    - get
+    - list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: guestcluster-quota-webhook-kubeconfig-read
+  namespace: fleet-default
+  labels:
+    app: guestcluster-quota-webhook
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: guestcluster-quota-webhook-kubeconfig-read
+subjects:
+- kind: ServiceAccount
+  name: guestcluster-quota-webhook
+  namespace: guestcluster-quota-webhook
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: guestcluster-quota-webhook-cc-read
+  namespace: cattle-global-data
+  labels:
+    app: guestcluster-quota-webhook
+rules:
+- apiGroups: [""]
+  resources:
+  - secrets
+  verbs:
+    - get
+    - list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: guestcluster-quota-webhook-cc-read
+  namespace: cattle-global-data
+  labels:
+    app: guestcluster-quota-webhook
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: guestcluster-quota-webhook-cc-read
+subjects:
+- kind: ServiceAccount
+  name: guestcluster-quota-webhook
+  namespace: guestcluster-quota-webhook
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: guestcluster-quota-webhook
+  name: guestcluster-quota-webhook
+  namespace: guestcluster-quota-webhook
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: guestcluster-quota-webhook
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: guestcluster-quota-webhook
+    spec:
+      containers:
+      - name: guestcluster-quota-webhook
+        image: ghcr.io/joeyloman/guestcluster-quota-webhook:latest
+        env:
+          - name: KUBENAMESPACE
+            value: guestcluster-quota-webhook
+          - name: LOGLEVEL
+            value: DEBUG
+          - name: OPERATEMODE
+            value: DENY
+        imagePullPolicy: Always
+        resources:
+          requests:
+            cpu: 100m
+            memory: 8Mi
+          limits:
+            cpu: 500m
+            memory: 32Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        securityContext: {}
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      serviceAccountName: guestcluster-quota-webhook
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: guestcluster-quota-webhook
+  name: guestcluster-quota-webhook
+  namespace: guestcluster-quota-webhook
+spec:
+  selector:
+    app: guestcluster-quota-webhook
+  ports:
+    - name: webhook
+      port: 8080
+      protocol: TCP
+      targetPort: 8443
+  sessionAffinity: None
+  type: ClusterIP
+   
