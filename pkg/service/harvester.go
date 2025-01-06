@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	provisioningv1 "github.com/rancher/rancher/pkg/apis/provisioning.cattle.io/v1"
 	log "github.com/sirupsen/logrus"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -14,6 +15,20 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
+
+func (h *Handler) checkMachinePools(logRef string, machinePoolname string, machinePools2Check []provisioningv1.RKEMachinePool) provisioningv1.RKEMachinePool {
+	for _, mpool := range machinePools2Check {
+		if mpool.Name == machinePoolname {
+			return mpool
+		}
+	}
+
+	// pool not found, set quantity to 0 so it can be used in the calculations
+	emptyPool := provisioningv1.RKEMachinePool{}
+	quantity := int32(0)
+	emptyPool.Quantity = &quantity
+	return emptyPool
+}
 
 func (h *Handler) getResourceQuotaFromHarvester(kubeConfig []byte, namespace string) (hardQuota HarvesterResourceQuota, usedQuota HarvesterResourceQuota, err error) {
 	if namespace == "" {
@@ -153,7 +168,7 @@ func (h *Handler) getHarvesterConfig(harvesterConfigName string) (harvesterConfi
 func (h *Handler) getHarvesterConfigPoolSizes(logRef string, config *HarvesterConfig) (poolSizes PoolResources, err error) {
 	CPUcount, err := strconv.Atoi(config.CPUcount)
 	if err != nil {
-		return poolSizes, fmt.Errorf("error cannnot convert CPUcount to int")
+		return poolSizes, fmt.Errorf("CPUcount is invalid")
 	}
 	poolSizes.MilliCPUs = int64(CPUcount) * 1000
 
@@ -161,14 +176,14 @@ func (h *Handler) getHarvesterConfigPoolSizes(logRef string, config *HarvesterCo
 
 	memorySize, err := strconv.Atoi(config.MemorySize)
 	if err != nil {
-		return poolSizes, fmt.Errorf("error cannnot convert MemorySize to int")
+		return poolSizes, fmt.Errorf("MemorySize is invalid")
 	}
 	poolSizes.MemorySizeBytes = int64(memorySize) * 1024 * 1024 * 1024
 	log.Debugf("(getHarvesterConfigPoolSizes) %s HarvesterConfig Memory: %d", logRef, poolSizes.MemorySizeBytes)
 
 	diskInfo, err := UnmarshalDiskInfo([]byte(config.DiskInfo))
 	if err != nil {
-		return poolSizes, fmt.Errorf("error cannnot decode diskInfo")
+		return poolSizes, fmt.Errorf("cannnot decode diskInfo")
 	}
 
 	var poolStorageSizeGB int = 0
@@ -184,19 +199,37 @@ func (h *Handler) getHarvesterConfigPoolSizes(logRef string, config *HarvesterCo
 	return
 }
 
-func (h *Handler) checkPoolSizes(incPoolResources *PoolResources) (err error) {
+func (h *Handler) validatePoolSizes(poolResources *PoolResources) (err error) {
+	// Rancher accepts negative numbers it should prevents updates as well
+	if poolResources.MilliCPUs < 900 {
+		return fmt.Errorf("incorrect amount [%d] of CPUs configured", poolResources.MilliCPUs/1000)
+	}
+
+	if poolResources.MemorySizeBytes < 1000000 {
+		return fmt.Errorf("incorrect amount [%d MiB] of Memory configured", poolResources.MemorySizeBytes/1024/1024)
+	}
+
+	if poolResources.StorageSizeBytes < 1000000 {
+		return fmt.Errorf("incorrect amount [%d MiB] of Storage configured", poolResources.StorageSizeBytes/1024/1024)
+	}
+
+	return
+}
+
+func (h *Handler) checkPoolSizes(poolResources *PoolResources) (err error) {
 	// This check is for the following behavior:
 	// If the cpu, memory or storage values are too high, they will be a converted to a negative numer.
-	if incPoolResources.MilliCPUs < 0 {
-		return fmt.Errorf("too much amount of CPUs configured")
+	// Or if Rancher accepts negatove numbers it should prevents updates as well
+	if poolResources.MilliCPUs < 0 {
+		return fmt.Errorf("incorrect amount [%d] of CPUs configured", poolResources.MilliCPUs)
 	}
 
-	if incPoolResources.MemorySizeBytes < 0 {
-		return fmt.Errorf("too much amount of Memory configured")
+	if poolResources.MemorySizeBytes < 0 {
+		return fmt.Errorf("incorrect amount [%d] of Memory configured", poolResources.MemorySizeBytes)
 	}
 
-	if incPoolResources.StorageSizeBytes < 0 {
-		return fmt.Errorf("too much amount of Storage configured")
+	if poolResources.StorageSizeBytes < 0 {
+		return fmt.Errorf("incorrect amount [%d] of Storage configured", poolResources.StorageSizeBytes)
 	}
 
 	return

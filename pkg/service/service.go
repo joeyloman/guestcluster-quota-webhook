@@ -12,6 +12,7 @@ import (
 	provisioningv1 "github.com/rancher/rancher/pkg/apis/provisioning.cattle.io/v1"
 	log "github.com/sirupsen/logrus"
 	admissionv1 "k8s.io/api/admission/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -115,55 +116,98 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 	}
 
 	var vmNamespace string
+
 	incPoolResources := PoolResources{}
 	incPoolResources.MilliCPUs = 0
 	incPoolResources.MemorySizeBytes = 0
 	incPoolResources.StorageSizeBytes = 0
 
-	for _, oldMpool := range tmpCluster.Spec.RKEConfig.MachinePools {
-		for _, newMpool := range newCluster.Spec.RKEConfig.MachinePools {
-			if oldMpool.Name == newMpool.Name {
-				log.Debugf("(validateCluster) %s comparing oldCluster quantity [%d] and newCluster quantity [%d] of machinepool: [%s]",
-					logRef, *oldMpool.Quantity, *newMpool.Quantity, newMpool.Name)
-
-				if *oldMpool.Quantity < *newMpool.Quantity {
-					log.Debugf("(validateCluster) %s machinepool quantity increase detected, try to get HarvesterConfig from NodeConfig: [%s]",
-						logRef, newMpool.NodeConfig.Name)
-
-					harvesterConfig, err := h.getHarvesterConfig(newMpool.NodeConfig.Name)
-					if err != nil {
-						log.Errorf("(validateCluster) %s error while getting harvester config: %s", logRef, err.Error())
-
-						return &admissionv1.AdmissionResponse{
-							UID:     ar.Request.UID,
-							Allowed: true,
-						}
-					}
-
-					if vmNamespace == "" {
-						vmNamespace = harvesterConfig.VMNamespace
-					}
-
-					poolSizes, err := h.getHarvesterConfigPoolSizes(logRef, &harvesterConfig)
-					if err != nil {
-						log.Errorf("(validateCluster) %s error while getting pool sizes: %s", logRef, err.Error())
-
-						return &admissionv1.AdmissionResponse{
-							UID:     ar.Request.UID,
-							Allowed: true,
-						}
-					}
-
-					for i := 0; i < int(*newMpool.Quantity-*oldMpool.Quantity); i++ {
-						incPoolResources.MilliCPUs = incPoolResources.MilliCPUs + poolSizes.MilliCPUs
-						incPoolResources.MemorySizeBytes = incPoolResources.MemorySizeBytes + poolSizes.MemorySizeBytes
-						incPoolResources.StorageSizeBytes = incPoolResources.StorageSizeBytes + poolSizes.StorageSizeBytes
-
-						log.Debugf("(validateCluster) %s intermediate resource increase calculation -> totalMilliCPU=%d / totalMemorySizeBytes=%d / totalStorageSizeBytes=%d",
-							logRef, incPoolResources.MilliCPUs, incPoolResources.MemorySizeBytes, incPoolResources.StorageSizeBytes)
-					}
-				}
+	// first detect the pool increases
+	for _, newMpool := range newCluster.Spec.RKEConfig.MachinePools {
+		// Rancher does not filter all inputs properly and accepts negative pool numbers
+		if *newMpool.Quantity < 0 {
+			log.Errorf("(validateCluster) %s pool quantity %d of pool name %s cannot be a negative number", logRef, *newMpool.Quantity, newMpool.Name)
+			webhookMessage := fmt.Sprintf("Pool quantity %d of pool name %s cannot be a negative number", *newMpool.Quantity, newMpool.Name)
+			return &admissionv1.AdmissionResponse{
+				UID:     ar.Request.UID,
+				Allowed: false,
+				Result:  &metav1.Status{Message: webhookMessage},
 			}
+		}
+
+		harvesterConfig, err := h.getHarvesterConfig(newMpool.NodeConfig.Name)
+		if err != nil {
+			log.Errorf("(validateCluster) %s error while getting harvester config for newMpool: %s", logRef, err.Error())
+
+			return &admissionv1.AdmissionResponse{
+				UID:     ar.Request.UID,
+				Allowed: true,
+			}
+		}
+
+		if vmNamespace == "" {
+			vmNamespace = harvesterConfig.VMNamespace
+		}
+
+		log.Debugf("(validateCluster) %s trying to get the pool sizes for pool [%s]", logRef, newMpool.NodeConfig.Name)
+
+		poolSizes, err := h.getHarvesterConfigPoolSizes(logRef, &harvesterConfig)
+		if err != nil {
+			log.Errorf("(validateCluster) %s error while getting pool sizes: %s", logRef, err.Error())
+
+			return &admissionv1.AdmissionResponse{
+				UID:     ar.Request.UID,
+				Allowed: true,
+			}
+		}
+
+		oldMpool := h.checkMachinePools(logRef, newMpool.Name, tmpCluster.Spec.RKEConfig.MachinePools)
+
+		log.Debugf("(validateCluster) %s comparing oldCluster quantity [%d] and newCluster quantity [%d] of existing machinepool: [%s] and NodeConfig [%s]",
+			logRef, *oldMpool.Quantity, *newMpool.Quantity, newMpool.Name, newMpool.NodeConfig.Name)
+
+		incPoolResources.MilliCPUs += poolSizes.MilliCPUs * int64(*newMpool.Quantity-*oldMpool.Quantity)
+		incPoolResources.MemorySizeBytes += poolSizes.MemorySizeBytes * int64(*newMpool.Quantity-*oldMpool.Quantity)
+		incPoolResources.StorageSizeBytes += poolSizes.StorageSizeBytes * int64(*newMpool.Quantity-*oldMpool.Quantity)
+	}
+
+	// then detect the pool removals
+	for _, oldMpool := range tmpCluster.Spec.RKEConfig.MachinePools {
+		harvesterConfig, err := h.getHarvesterConfig(oldMpool.NodeConfig.Name)
+		if err != nil {
+			log.Errorf("(validateCluster) %s error while getting harvester config for oldMpool: %s", logRef, err.Error())
+
+			return &admissionv1.AdmissionResponse{
+				UID:     ar.Request.UID,
+				Allowed: true,
+			}
+		}
+
+		if vmNamespace == "" {
+			vmNamespace = harvesterConfig.VMNamespace
+		}
+
+		poolSizes, err := h.getHarvesterConfigPoolSizes(logRef, &harvesterConfig)
+		if err != nil {
+			log.Errorf("(validateCluster) %s error while getting pool sizes: %s", logRef, err.Error())
+
+			return &admissionv1.AdmissionResponse{
+				UID:     ar.Request.UID,
+				Allowed: true,
+			}
+		}
+
+		newMpool := h.checkMachinePools(logRef, oldMpool.Name, newCluster.Spec.RKEConfig.MachinePools)
+
+		log.Debugf("(validateCluster) %s comparing oldCluster quantity [%d] and newCluster quantity [%d] of existing machinepool: [%s] and NodeConfig [%s]",
+			logRef, *oldMpool.Quantity, *newMpool.Quantity, oldMpool.Name, oldMpool.NodeConfig.Name)
+
+		if newMpool.Name == "" {
+			log.Debugf("(validateCluster) %s new pool [%s] not found anymore, so it's deleted", logRef, oldMpool.Name)
+
+			incPoolResources.MilliCPUs -= poolSizes.MilliCPUs * int64(*oldMpool.Quantity)
+			incPoolResources.MemorySizeBytes -= poolSizes.MemorySizeBytes * int64(*oldMpool.Quantity)
+			incPoolResources.StorageSizeBytes -= poolSizes.StorageSizeBytes * int64(*oldMpool.Quantity)
 		}
 	}
 
@@ -178,17 +222,8 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 	}
 	log.Debugf("(validateCluster) %s HarvesterConfig vmnamespace: %s", logRef, vmNamespace)
 
-	log.Debugf("(validateCluster) %s total resource increase request -> totalMilliCPU=%d / totalMemorySizeBytes=%d / totalStorageSizeBytes=%d",
+	log.Debugf("(validateCluster) %s total resource increase or decrease request -> totalMilliCPU=%d / totalMemorySizeBytes=%d / totalStorageSizeBytes=%d",
 		logRef, incPoolResources.MilliCPUs, incPoolResources.MemorySizeBytes, incPoolResources.StorageSizeBytes)
-
-	if err := h.checkPoolSizes(&incPoolResources); err != nil {
-		log.Errorf("(validateCluster) %s error while checking the combined pool sizes: %s", logRef, err.Error())
-
-		return &admissionv1.AdmissionResponse{
-			UID:     ar.Request.UID,
-			Allowed: true,
-		}
-	}
 
 	// check if the cloudCredentialSecretName exists
 	if newCluster.Spec.CloudCredentialSecretName == "" {
@@ -270,10 +305,21 @@ func (h *Handler) validateHarvesterConfig(ar *admissionv1.AdmissionReview, oldHa
 	newPoolSizes, err := h.getHarvesterConfigPoolSizes(logRef, newHarvesterConfig)
 	if err != nil {
 		log.Errorf("(validateHarvesterConfig) %s error while getting pool sizes: %s", logRef, err.Error())
-
+		webhookMessage := fmt.Sprintf("Error: %s", err.Error())
 		return &admissionv1.AdmissionResponse{
 			UID:     ar.Request.UID,
-			Allowed: true,
+			Allowed: false,
+			Result:  &metav1.Status{Message: webhookMessage},
+		}
+	}
+
+	if err := h.validatePoolSizes(&newPoolSizes); err != nil {
+		log.Errorf("(validateHarvesterConfig) %s error %s", logRef, err.Error())
+		webhookMessage := fmt.Sprintf("Error: %s", err.Error())
+		return &admissionv1.AdmissionResponse{
+			UID:     ar.Request.UID,
+			Allowed: false,
+			Result:  &metav1.Status{Message: webhookMessage},
 		}
 	}
 
@@ -306,9 +352,9 @@ func (h *Handler) validateHarvesterConfig(ar *admissionv1.AdmissionReview, oldHa
 		}
 
 		if fullQuotaCheckNeeded {
-			incPoolResources.MilliCPUs = incPoolResources.MilliCPUs + newPoolSizes.MilliCPUs
-			incPoolResources.MemorySizeBytes = incPoolResources.MemorySizeBytes + newPoolSizes.MemorySizeBytes
-			incPoolResources.StorageSizeBytes = incPoolResources.StorageSizeBytes + newPoolSizes.StorageSizeBytes
+			incPoolResources.MilliCPUs += newPoolSizes.MilliCPUs
+			incPoolResources.MemorySizeBytes += newPoolSizes.MemorySizeBytes
+			incPoolResources.StorageSizeBytes += newPoolSizes.StorageSizeBytes
 		} else {
 			oldPoolSizes, err := h.getHarvesterConfigPoolSizes(logRef, oldHarvesterConfig)
 			if err != nil {
@@ -334,19 +380,19 @@ func (h *Handler) validateHarvesterConfig(ar *admissionv1.AdmissionReview, oldHa
 
 			// if the old pool size is larger then the new one we need less space we keep the incPoolResources objects on 0
 			if newPoolSizes.MilliCPUs > oldPoolSizes.MilliCPUs {
-				incPoolResources.MilliCPUs = incPoolResources.MilliCPUs + (newPoolSizes.MilliCPUs - oldPoolSizes.MilliCPUs)
+				incPoolResources.MilliCPUs += newPoolSizes.MilliCPUs - oldPoolSizes.MilliCPUs
 			}
 			if newPoolSizes.MemorySizeBytes > oldPoolSizes.MemorySizeBytes {
-				incPoolResources.MemorySizeBytes = incPoolResources.MemorySizeBytes + (newPoolSizes.MemorySizeBytes - oldPoolSizes.MemorySizeBytes)
+				incPoolResources.MemorySizeBytes += newPoolSizes.MemorySizeBytes - oldPoolSizes.MemorySizeBytes
 			}
 			if newPoolSizes.StorageSizeBytes > oldPoolSizes.StorageSizeBytes {
-				incPoolResources.StorageSizeBytes = incPoolResources.StorageSizeBytes + (newPoolSizes.StorageSizeBytes - oldPoolSizes.StorageSizeBytes)
+				incPoolResources.StorageSizeBytes += newPoolSizes.StorageSizeBytes - oldPoolSizes.StorageSizeBytes
 			}
 		}
 	} else {
-		incPoolResources.MilliCPUs = incPoolResources.MilliCPUs + newPoolSizes.MilliCPUs
-		incPoolResources.MemorySizeBytes = incPoolResources.MemorySizeBytes + newPoolSizes.MemorySizeBytes
-		incPoolResources.StorageSizeBytes = incPoolResources.StorageSizeBytes + newPoolSizes.StorageSizeBytes
+		incPoolResources.MilliCPUs += newPoolSizes.MilliCPUs
+		incPoolResources.MemorySizeBytes += newPoolSizes.MemorySizeBytes
+		incPoolResources.StorageSizeBytes += newPoolSizes.StorageSizeBytes
 	}
 
 	log.Debugf("(validateHarvesterConfig) %s total resource increase request -> totalMilliCPU=%d / totalMemorySizeBytes=%d / totalStorageSizeBytes=%d",
