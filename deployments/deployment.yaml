@@ -243,9 +243,26 @@ spec:
     app: guestcluster-quota-webhook
   ports:
     - name: webhook
-      port: 8080
+      port: 8443
       protocol: TCP
       targetPort: 8443
   sessionAffinity: None
   type: ClusterIP
-   
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: guestcluster-quota-webhook
+  name: guestcluster-quota-webhook-metrics
+  namespace: guestcluster-quota-webhook
+spec:
+  selector:
+    app: guestcluster-quota-webhook
+  ports:
+    - name: metrics
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+  sessionAffinity: None
+  type: ClusterIP

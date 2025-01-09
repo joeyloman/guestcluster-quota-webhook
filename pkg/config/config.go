@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/joeyloman/guestcluster-quota-webhook/pkg/metrics"
 	"github.com/joeyloman/guestcluster-quota-webhook/pkg/util"
 	log "github.com/sirupsen/logrus"
 
@@ -19,15 +20,17 @@ type Handler struct {
 	webhookName       string
 	webhookSecretName string
 	csrName           string
+	metrics           *metrics.MetricsAllocator
 }
 
-func Register(ctx context.Context, kubeConfig string, kubeContext string, webhookName string, webhookNamespace string) *Handler {
+func Register(ctx context.Context, kubeConfig string, kubeContext string, webhookName string, webhookNamespace string, metrics *metrics.MetricsAllocator) *Handler {
 	return &Handler{
 		ctx:              ctx,
 		kubeConfig:       kubeConfig,
 		kubeContext:      kubeContext,
 		webhookName:      webhookName,
 		webhookNamespace: webhookNamespace,
+		metrics:          metrics,
 	}
 }
 
@@ -52,26 +55,31 @@ func (h *Handler) Run(certRenewalPeriod int64) {
 		if h.checkCertExpireDate(certRenewalPeriod) {
 			if err := h.renewTLSPair(); err != nil {
 				log.Errorf("%s", err.Error())
+				h.metrics.UpdateLogStatus("error")
 			}
 		}
 	} else {
 		if h.checkCSR() {
 			if err := h.deleteCSR(); err != nil {
 				log.Errorf("%s", err.Error())
+				h.metrics.UpdateLogStatus("error")
 			}
 		}
 
 		tlsPair, err := h.generateTLSKeyAndCert()
 		if err != nil {
 			log.Errorf("%s", err.Error())
+			h.metrics.UpdateLogStatus("error")
 		}
 
 		if err := h.createSecret(tlsPair); err != nil {
 			log.Errorf("%s", err.Error())
+			h.metrics.UpdateLogStatus("error")
 		}
 	}
 
 	if err := h.writeTLSDataFromSecret(); err != nil {
 		log.Errorf("%s", err.Error())
+		h.metrics.UpdateLogStatus("error")
 	}
 }

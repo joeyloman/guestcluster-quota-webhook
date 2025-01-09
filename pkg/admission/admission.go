@@ -89,7 +89,7 @@ func (h *Handler) getClusterWebhook() (webhook admregv1.ValidatingWebhook, err e
 	serviceref.Name = h.webhookName
 	path := "/validate-cluster"
 	serviceref.Path = &path
-	port := int32(8080)
+	port := int32(8443)
 	serviceref.Port = &port
 	clientconfig.Service = &serviceref
 	clientconfig.CABundle = []byte(cert)
@@ -134,7 +134,7 @@ func (h *Handler) getHarvesterConfigWebhook() (webhook admregv1.ValidatingWebhoo
 	serviceref.Name = h.webhookName
 	path := "/validate-harvesterconfig"
 	serviceref.Path = &path
-	port := int32(8080)
+	port := int32(8443)
 	serviceref.Port = &port
 	clientconfig.Service = &serviceref
 	clientconfig.CABundle = []byte(cert)

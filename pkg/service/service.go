@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/joeyloman/guestcluster-quota-webhook/pkg/metrics"
 	"github.com/joeyloman/guestcluster-quota-webhook/pkg/util"
 	provisioningv1 "github.com/rancher/rancher/pkg/apis/provisioning.cattle.io/v1"
 	log "github.com/sirupsen/logrus"
@@ -29,14 +30,16 @@ type Handler struct {
 	kubeContext string
 	clientset   *kubernetes.Clientset
 	operateMode int
+	metrics     *metrics.MetricsAllocator
 }
 
-func Register(ctx context.Context, kubeConfig string, kubeContext string, operateMode int) *Handler {
+func Register(ctx context.Context, kubeConfig string, kubeContext string, operateMode int, metrics *metrics.MetricsAllocator) *Handler {
 	return &Handler{
 		ctx:         ctx,
 		kubeConfig:  kubeConfig,
 		kubeContext: kubeContext,
 		operateMode: operateMode,
+		metrics:     metrics,
 	}
 }
 
@@ -127,6 +130,8 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 		// Rancher does not filter all inputs properly and accepts negative pool numbers
 		if *newMpool.Quantity < 0 {
 			log.Errorf("(validateCluster) %s pool quantity %d of pool name %s cannot be a negative number", logRef, *newMpool.Quantity, newMpool.Name)
+			h.metrics.UpdateAppActions("Cluster", newCluster.Name, "block")
+
 			webhookMessage := fmt.Sprintf("Pool quantity %d of pool name %s cannot be a negative number", *newMpool.Quantity, newMpool.Name)
 			return &admissionv1.AdmissionResponse{
 				UID:     ar.Request.UID,
@@ -138,6 +143,7 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 		harvesterConfig, err := h.getHarvesterConfig(newMpool.NodeConfig.Name)
 		if err != nil {
 			log.Errorf("(validateCluster) %s error while getting harvester config for newMpool: %s", logRef, err.Error())
+			h.metrics.UpdateLogStatus("error")
 
 			return &admissionv1.AdmissionResponse{
 				UID:     ar.Request.UID,
@@ -154,6 +160,7 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 		poolSizes, err := h.getHarvesterConfigPoolSizes(logRef, &harvesterConfig)
 		if err != nil {
 			log.Errorf("(validateCluster) %s error while getting pool sizes: %s", logRef, err.Error())
+			h.metrics.UpdateLogStatus("error")
 
 			return &admissionv1.AdmissionResponse{
 				UID:     ar.Request.UID,
@@ -176,6 +183,7 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 		harvesterConfig, err := h.getHarvesterConfig(oldMpool.NodeConfig.Name)
 		if err != nil {
 			log.Errorf("(validateCluster) %s error while getting harvester config for oldMpool: %s", logRef, err.Error())
+			h.metrics.UpdateLogStatus("error")
 
 			return &admissionv1.AdmissionResponse{
 				UID:     ar.Request.UID,
@@ -190,6 +198,7 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 		poolSizes, err := h.getHarvesterConfigPoolSizes(logRef, &harvesterConfig)
 		if err != nil {
 			log.Errorf("(validateCluster) %s error while getting pool sizes: %s", logRef, err.Error())
+			h.metrics.UpdateLogStatus("error")
 
 			return &admissionv1.AdmissionResponse{
 				UID:     ar.Request.UID,
@@ -211,9 +220,8 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 		}
 	}
 
-	// TODO: can't we fix this?
 	if vmNamespace == "" {
-		log.Warnf("(validateCluster) %s vmNamespace is empty, so no checks can be performed", logRef)
+		log.Debugf("(validateCluster) %s vmNamespace is empty, so no checks can be performed", logRef)
 
 		return &admissionv1.AdmissionResponse{
 			UID:     ar.Request.UID,
@@ -228,6 +236,7 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 	// check if the cloudCredentialSecretName exists
 	if newCluster.Spec.CloudCredentialSecretName == "" {
 		log.Errorf("(validateCluster) %s error cluster cloud credential is empty", logRef)
+		h.metrics.UpdateLogStatus("error")
 
 		return &admissionv1.AdmissionResponse{
 			UID:     ar.Request.UID,
@@ -238,6 +247,7 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 	hardQuota, usedQuota, err := h.getHarvesterResourceQuota(logRef, vmNamespace, newCluster.Spec.CloudCredentialSecretName)
 	if err != nil {
 		log.Errorf("(validateCluster) %s error while gathering Harvester resource quota: %s", logRef, err.Error())
+		h.metrics.UpdateLogStatus("error")
 
 		return &admissionv1.AdmissionResponse{
 			UID:     ar.Request.UID,
@@ -245,13 +255,22 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 		}
 	}
 
-	return h.validateHarvesterQuota(logRef, ar, &hardQuota, &usedQuota, &incPoolResources)
+	admissionResponse := h.validateHarvesterQuota(logRef, ar, &hardQuota, &usedQuota, &incPoolResources)
+	if admissionResponse.Allowed {
+		h.metrics.UpdateAppActions("Cluster", newCluster.Name, "accept")
+	} else {
+		h.metrics.UpdateAppActions("Cluster", newCluster.Name, "block")
+	}
+
+	return admissionResponse
 }
 
 func (h *Handler) validateClusterAdmission(w http.ResponseWriter, r *http.Request) {
 	ar := &admissionv1.AdmissionReview{}
 	if err := json.NewDecoder(r.Body).Decode(&ar); err != nil {
 		log.Errorf("(validateClusterAdmission) cannot decode AdmissionReview to json: %s", err)
+		h.metrics.UpdateLogStatus("error")
+
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(w, "(validateClusterAdmission) cannot decode AdmissionReview to json: %s", err)
 	}
@@ -260,6 +279,8 @@ func (h *Handler) validateClusterAdmission(w http.ResponseWriter, r *http.Reques
 	if len(ar.Request.OldObject.Raw) > 0 {
 		if err := json.Unmarshal(ar.Request.OldObject.Raw, &oldCluster); err != nil {
 			log.Errorf("(validateClusterAdmission) cannot unmarshal json to OLD cluster object: %s", err)
+			h.metrics.UpdateLogStatus("error")
+
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "(validateClusterAdmission) cannot unmarshal json to OLD cluster object: %s", err)
 		}
@@ -269,6 +290,8 @@ func (h *Handler) validateClusterAdmission(w http.ResponseWriter, r *http.Reques
 	if len(ar.Request.Object.Raw) > 0 {
 		if err := json.Unmarshal(ar.Request.Object.Raw, &newCluster); err != nil {
 			log.Errorf("(validateClusterAdmission) cannot unmarshal json to NEW cluster object: %s", err)
+			h.metrics.UpdateLogStatus("error")
+
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "(validateClusterAdmission) cannot unmarshal json to NEW cluster object: %s", err)
 		}
@@ -305,6 +328,8 @@ func (h *Handler) validateHarvesterConfig(ar *admissionv1.AdmissionReview, oldHa
 	newPoolSizes, err := h.getHarvesterConfigPoolSizes(logRef, newHarvesterConfig)
 	if err != nil {
 		log.Errorf("(validateHarvesterConfig) %s error while getting pool sizes: %s", logRef, err.Error())
+		h.metrics.UpdateAppActions("HarvesterConfig", newHarvesterConfig.Name, "block")
+
 		webhookMessage := fmt.Sprintf("Error: %s", err.Error())
 		return &admissionv1.AdmissionResponse{
 			UID:     ar.Request.UID,
@@ -315,6 +340,8 @@ func (h *Handler) validateHarvesterConfig(ar *admissionv1.AdmissionReview, oldHa
 
 	if err := h.validatePoolSizes(&newPoolSizes); err != nil {
 		log.Errorf("(validateHarvesterConfig) %s error %s", logRef, err.Error())
+		h.metrics.UpdateAppActions("HarvesterConfig", newHarvesterConfig.Name, "block")
+
 		webhookMessage := fmt.Sprintf("Error: %s", err.Error())
 		return &admissionv1.AdmissionResponse{
 			UID:     ar.Request.UID,
@@ -330,10 +357,12 @@ func (h *Handler) validateHarvesterConfig(ar *admissionv1.AdmissionReview, oldHa
 		oldHarvesterConfigDiskInfo, err := UnmarshalDiskInfo([]byte(oldHarvesterConfig.DiskInfo))
 		if err != nil {
 			log.Errorf("(validateHarvesterConfig) %s error while decoding the disk info of oldHarvesterConfig: %s", logRef, err.Error())
+			h.metrics.UpdateLogStatus("error")
 		} else {
 			newHarvesterConfigDiskInfo, err := UnmarshalDiskInfo([]byte(newHarvesterConfig.DiskInfo))
 			if err != nil {
 				log.Errorf("(validateHarvesterConfig) %s error while decoding the disk info of newHarvesterConfig: %s", logRef, err.Error())
+				h.metrics.UpdateLogStatus("error")
 			} else {
 				for oldId, oldDisk := range oldHarvesterConfigDiskInfo.Disks {
 					for newId, newDisk := range newHarvesterConfigDiskInfo.Disks {
@@ -359,6 +388,7 @@ func (h *Handler) validateHarvesterConfig(ar *admissionv1.AdmissionReview, oldHa
 			oldPoolSizes, err := h.getHarvesterConfigPoolSizes(logRef, oldHarvesterConfig)
 			if err != nil {
 				log.Errorf("(validateHarvesterConfig) %s error while getting old pool sizes: %s", logRef, err.Error())
+				h.metrics.UpdateLogStatus("error")
 
 				return &admissionv1.AdmissionResponse{
 					UID:     ar.Request.UID,
@@ -400,6 +430,7 @@ func (h *Handler) validateHarvesterConfig(ar *admissionv1.AdmissionReview, oldHa
 
 	if err := h.checkPoolSizes(&incPoolResources); err != nil {
 		log.Errorf("(validateHarvesterConfig) %s error while checking the pool size: %s", logRef, err.Error())
+		h.metrics.UpdateLogStatus("error")
 
 		return &admissionv1.AdmissionResponse{
 			UID:     ar.Request.UID,
@@ -408,7 +439,7 @@ func (h *Handler) validateHarvesterConfig(ar *admissionv1.AdmissionReview, oldHa
 	}
 
 	if newHarvesterConfig.VMNamespace == "" {
-		log.Warnf("(validateHarvesterConfig) %s error harvesterConfig.VMNamespace is empty, so no checks can be performed", logRef)
+		log.Debugf("(validateHarvesterConfig) %s harvesterConfig.VMNamespace is empty, so no checks can be performed", logRef)
 
 		return &admissionv1.AdmissionResponse{
 			UID:     ar.Request.UID,
@@ -438,6 +469,7 @@ func (h *Handler) validateHarvesterConfig(ar *admissionv1.AdmissionReview, oldHa
 		clusterName, err = h.getClusterNameFromHarvesterConfigName(logRef, newHarvesterConfig.Name)
 		if err != nil {
 			log.Errorf("(validateHarvesterConfig) %s error while gathering Harvester cluster name: %s", logRef, err.Error())
+			h.metrics.UpdateLogStatus("error")
 		}
 	}
 	// if the clusterName is still empty here we cannot perform any checks
@@ -454,6 +486,7 @@ func (h *Handler) validateHarvesterConfig(ar *admissionv1.AdmissionReview, oldHa
 	cloudCredentialSecretName, err := h.getHarvesterClusterCloudCredential(clusterName)
 	if err != nil {
 		log.Errorf("(validateHarvesterConfig) %s error while gathering Harvester cloud credential: %s", logRef, err.Error())
+		h.metrics.UpdateLogStatus("error")
 
 		return &admissionv1.AdmissionResponse{
 			UID:     ar.Request.UID,
@@ -464,6 +497,7 @@ func (h *Handler) validateHarvesterConfig(ar *admissionv1.AdmissionReview, oldHa
 	hardQuota, usedQuota, err := h.getHarvesterResourceQuota(logRef, newHarvesterConfig.VMNamespace, cloudCredentialSecretName)
 	if err != nil {
 		log.Errorf("(validateHarvesterConfig) %s error while gathering Harvester resource quota: %s", logRef, err.Error())
+		h.metrics.UpdateLogStatus("error")
 
 		return &admissionv1.AdmissionResponse{
 			UID:     ar.Request.UID,
@@ -478,13 +512,23 @@ func (h *Handler) validateHarvesterConfig(ar *admissionv1.AdmissionReview, oldHa
 	log.Debugf("(validateHarvesterConfig) %s hardQuota.StorageRequests=%d / usedQuota.StorageRequests=%d / incPoolResources.StorageSizeBytes=%d",
 		logRef, hardQuota.StorageRequests, usedQuota.StorageRequests, incPoolResources.StorageSizeBytes)
 
-	return h.validateHarvesterQuota(logRef, ar, &hardQuota, &usedQuota, &incPoolResources)
+	admissionResponse := h.validateHarvesterQuota(logRef, ar, &hardQuota, &usedQuota, &incPoolResources)
+
+	if admissionResponse.Allowed {
+		h.metrics.UpdateAppActions("HarvesterConfig", newHarvesterConfig.Name, "accept")
+	} else {
+		h.metrics.UpdateAppActions("HarvesterConfig", newHarvesterConfig.Name, "block")
+	}
+
+	return admissionResponse
 }
 
 func (h *Handler) validateHarvesterConfigAdmission(w http.ResponseWriter, r *http.Request) {
 	ar := &admissionv1.AdmissionReview{}
 	if err := json.NewDecoder(r.Body).Decode(&ar); err != nil {
 		log.Errorf("(validateHarvesterConfigAdmission) cannot decode AdmissionReview to json: %s", err)
+		h.metrics.UpdateLogStatus("error")
+
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(w, "(validateHarvesterConfigAdmission) cannot decode AdmissionReview to json: %s", err)
 	}
@@ -493,6 +537,8 @@ func (h *Handler) validateHarvesterConfigAdmission(w http.ResponseWriter, r *htt
 	if len(ar.Request.OldObject.Raw) > 0 {
 		if err := json.Unmarshal(ar.Request.OldObject.Raw, &oldHarvesterConfig); err != nil {
 			log.Errorf("(validateHarvesterConfigAdmission) cannot unmarshal json to OLD harvesterconfig object: %s", err)
+			h.metrics.UpdateLogStatus("error")
+
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "(validateHarvesterConfigAdmission) cannot unmarshal json to OLD harvesterconfig object: %s", err)
 		}
@@ -502,6 +548,8 @@ func (h *Handler) validateHarvesterConfigAdmission(w http.ResponseWriter, r *htt
 	if len(ar.Request.Object.Raw) > 0 {
 		if err := json.Unmarshal(ar.Request.Object.Raw, &newHarvesterConfig); err != nil {
 			log.Errorf("(validateHarvesterConfigAdmission) cannot unmarshal json to NEW harvesterconfig object: %s", err)
+			h.metrics.UpdateLogStatus("error")
+
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "(validateHarvesterConfigAdmission) cannot unmarshal json to NEW harvesterconfig object: %s", err)
 		}
@@ -532,6 +580,7 @@ func (h *Handler) Run() {
 	}
 
 	log.Error(h.httpServer.ListenAndServeTLS(certPath, keyPath))
+	h.metrics.UpdateLogStatus("error")
 }
 
 func (h *Handler) Stop() error {

@@ -204,6 +204,7 @@ func (h *Handler) checkCertExpireDate(certRenewalPeriod int64) bool {
 	expireDate, err := h.GetCertExpireDate()
 	if err != nil {
 		log.Errorf("%s", err.Error())
+		h.metrics.UpdateLogStatus("error")
 
 		return false
 	}

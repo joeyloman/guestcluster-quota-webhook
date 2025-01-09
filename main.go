@@ -11,6 +11,7 @@ import (
 
 	"github.com/joeyloman/guestcluster-quota-webhook/pkg/admission"
 	"github.com/joeyloman/guestcluster-quota-webhook/pkg/config"
+	"github.com/joeyloman/guestcluster-quota-webhook/pkg/metrics"
 	"github.com/joeyloman/guestcluster-quota-webhook/pkg/scheduler"
 	"github.com/joeyloman/guestcluster-quota-webhook/pkg/service"
 	log "github.com/sirupsen/logrus"
@@ -70,12 +71,16 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	metricsHandler := metrics.Register()
+	go metricsHandler.Run()
+
 	configHandler := config.Register(
 		ctx,
 		kubeconfig_file,
 		kubeconfig_context,
 		"guestcluster-quota-webhook",
 		kubenamespace,
+		metricsHandler,
 	)
 
 	admissionHandler := admission.Register(
@@ -92,6 +97,7 @@ func main() {
 		kubeconfig_file,
 		kubeconfig_context,
 		operateMode,
+		metricsHandler,
 	)
 
 	configHandler.Init()
