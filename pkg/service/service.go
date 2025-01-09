@@ -73,8 +73,8 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 			Allowed: true,
 		}
 	}
-	if newCluster.Spec.RKEConfig.MachineSelectorConfig == nil {
-		log.Debugf("(validateCluster) %s no RKEConfig.MachineSelectorConfig detected in cluster object, cluster is not a Harvester Guest Cluster.", logRef)
+	if newCluster.Spec.RKEConfig.MachinePools == nil {
+		log.Debugf("(validateCluster) %s no RKEConfig.MachinePools detected in cluster object, cluster is not a Harvester Guest Cluster.", logRef)
 
 		return &admissionv1.AdmissionResponse{
 			UID:     ar.Request.UID,
@@ -82,12 +82,14 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 		}
 	}
 	var isHarvesterGuest bool = false
-	for _, cfg := range newCluster.Spec.RKEConfig.MachineSelectorConfig {
-		log.Debugf("(validateCluster) %s checking cloud-provider-name: %s", logRef, cfg.Config.Data["cloud-provider-name"])
+	for _, cfg := range newCluster.Spec.RKEConfig.MachinePools {
+		if cfg.NodeConfig != nil {
+			log.Debugf("(validateCluster) %s checking RKEConfig.MachinePools.NodeConfig.Kind: %s", logRef, cfg.NodeConfig.Kind)
 
-		if cfg.Config.Data["cloud-provider-name"] == "harvester" {
-			isHarvesterGuest = true
-			break
+			if cfg.NodeConfig.Kind == "HarvesterConfig" {
+				isHarvesterGuest = true
+				break
+			}
 		}
 	}
 	if !isHarvesterGuest {
