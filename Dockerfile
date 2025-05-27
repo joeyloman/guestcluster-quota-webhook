@@ -1,4 +1,4 @@
-FROM docker.io/golang:1.23-alpine3.20 as builder
+FROM docker.io/golang:1.24-alpine3.20 as builder
 RUN mkdir /src /deps
 RUN apk update && apk add git build-base binutils-gold
 WORKDIR /deps
