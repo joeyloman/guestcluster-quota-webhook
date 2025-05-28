@@ -2,7 +2,7 @@ package v1
 
 import (
 	rkev1 "github.com/rancher/rancher/pkg/apis/rke.cattle.io/v1"
-	"github.com/rancher/wrangler/v2/pkg/genericcondition"
+	"github.com/rancher/wrangler/v3/pkg/genericcondition"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -29,7 +29,6 @@ type ClusterSpec struct {
 	AgentEnvVars                                         []rkev1.EnvVar                `json:"agentEnvVars,omitempty"`
 	ClusterAgentDeploymentCustomization                  *AgentDeploymentCustomization `json:"clusterAgentDeploymentCustomization,omitempty"`
 	DefaultPodSecurityAdmissionConfigurationTemplateName string                        `json:"defaultPodSecurityAdmissionConfigurationTemplateName,omitempty"`
-	DefaultPodSecurityPolicyTemplateName                 string                        `json:"defaultPodSecurityPolicyTemplateName,omitempty" norman:"type=reference[podSecurityPolicyTemplate]"`
 	DefaultClusterRoleForProjectMembers                  string                        `json:"defaultClusterRoleForProjectMembers,omitempty" norman:"type=reference[roleTemplate]"`
 	EnableNetworkPolicy                                  *bool                         `json:"enableNetworkPolicy,omitempty" norman:"default=false"`
 	FleetAgentDeploymentCustomization                    *AgentDeploymentCustomization `json:"fleetAgentDeploymentCustomization,omitempty"`
@@ -38,9 +37,25 @@ type ClusterSpec struct {
 }
 
 type AgentDeploymentCustomization struct {
-	AppendTolerations            []v1.Toleration          `json:"appendTolerations,omitempty"`
-	OverrideAffinity             *v1.Affinity             `json:"overrideAffinity,omitempty"`
-	OverrideResourceRequirements *v1.ResourceRequirements `json:"overrideResourceRequirements,omitempty"`
+	AppendTolerations            []v1.Toleration               `json:"appendTolerations,omitempty"`
+	OverrideAffinity             *v1.Affinity                  `json:"overrideAffinity,omitempty"`
+	OverrideResourceRequirements *v1.ResourceRequirements      `json:"overrideResourceRequirements,omitempty"`
+	SchedulingCustomization      *AgentSchedulingCustomization `json:"schedulingCustomization,omitempty"`
+}
+
+type AgentSchedulingCustomization struct {
+	PriorityClass       *PriorityClassSpec       `json:"priorityClass,omitempty"`
+	PodDisruptionBudget *PodDisruptionBudgetSpec `json:"podDisruptionBudget,omitempty"`
+}
+
+type PriorityClassSpec struct {
+	Value            int                  `json:"value,omitempty"`
+	PreemptionPolicy *v1.PreemptionPolicy `json:"preemptionPolicy,omitempty"`
+}
+
+type PodDisruptionBudgetSpec struct {
+	MinAvailable   string `json:"minAvailable,omitempty"`
+	MaxUnavailable string `json:"maxUnavailable,omitempty"`
 }
 
 type ClusterStatus struct {
