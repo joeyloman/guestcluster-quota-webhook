@@ -56,7 +56,7 @@ type HarvesterConfig struct {
 
 	CPUcount   string `json:"cpucount,omitempty"`
 	MemorySize string `json:"memorysize,omitempty"`
-	// DiskSize   string `json:"disksize,omitempty"`
+	DiskSize   string `json:"disksize,omitempty"`
 	// DiskBus    string `json:"diskbus,omitempty"`
 
 	ImageName string `json:"imagename,omitempty"`

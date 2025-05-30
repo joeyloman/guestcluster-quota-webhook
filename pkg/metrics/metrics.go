@@ -77,7 +77,7 @@ func (m *MetricsAllocator) UpdateAppActions(resource string, name string, action
 }
 
 func (m *MetricsAllocator) Run() {
-	log.Infof("(metrics.Run) starting the Metrics service")
+	log.Debugf("(metrics.Run) starting the Metrics service")
 
 	var metricsPort int
 

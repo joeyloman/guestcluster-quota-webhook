@@ -181,18 +181,25 @@ func (h *Handler) getHarvesterConfigPoolSizes(logRef string, config *HarvesterCo
 	poolSizes.MemorySizeBytes = int64(memorySize) * 1024 * 1024 * 1024
 	log.Debugf("(getHarvesterConfigPoolSizes) %s HarvesterConfig Memory: %d", logRef, poolSizes.MemorySizeBytes)
 
-	diskInfo, err := UnmarshalDiskInfo([]byte(config.DiskInfo))
-	if err != nil {
-		return poolSizes, fmt.Errorf("cannnot decode diskInfo")
-	}
-
 	var poolStorageSizeGB int = 0
+	if config.DiskInfo != "" {
+		diskInfo, err := UnmarshalDiskInfo([]byte(config.DiskInfo))
+		if err != nil {
+			return poolSizes, fmt.Errorf("cannnot decode diskInfo")
+		}
 
-	for id, disk := range diskInfo.Disks {
-		poolStorageSizeGB = poolStorageSizeGB + disk.Size
-		log.Debugf("(getHarvesterConfigPoolSizes) %s HarvesterConfig Disk %d: %d GB", logRef, id, disk.Size)
+		for id, disk := range diskInfo.Disks {
+			poolStorageSizeGB = poolStorageSizeGB + disk.Size
+			log.Debugf("(getHarvesterConfigPoolSizes) %s HarvesterConfig Disk %d: %d GB", logRef, id, disk.Size)
+		}
+	} else {
+		if config.DiskSize != "" {
+			poolStorageSizeGB, err = strconv.Atoi(config.DiskSize)
+			if err != nil {
+				return poolSizes, fmt.Errorf("DiskSize is invalid")
+			}
+		}
 	}
-
 	poolSizes.StorageSizeBytes = int64(poolStorageSizeGB * 1024 * 1024 * 1024)
 	log.Debugf("(getHarvesterConfigPoolSizes) %s poolStorageSizeBytes: %d", logRef, poolSizes.StorageSizeBytes)
 
