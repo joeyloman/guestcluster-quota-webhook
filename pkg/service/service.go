@@ -14,6 +14,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -28,9 +29,11 @@ type Handler struct {
 	httpServer  *http.Server
 	kubeConfig  string
 	kubeContext string
-	clientset   *kubernetes.Clientset
-	operateMode int
-	metrics     *metrics.MetricsAllocator
+	// clientset   *kubernetes.Clientset
+	clientset     kubernetes.Interface
+	dynamicClient dynamic.Interface
+	operateMode   int
+	metrics       *metrics.MetricsAllocator
 }
 
 func Register(ctx context.Context, kubeConfig string, kubeContext string, operateMode int, metrics *metrics.MetricsAllocator) *Handler {
@@ -54,6 +57,12 @@ func (h *Handler) Init() {
 		log.Panicf("%s", err.Error())
 	}
 	h.clientset = clientset
+
+	client, err := dynamic.NewForConfig(config)
+	if err != nil {
+		log.Panicf("%s", err.Error())
+	}
+	h.dynamicClient = client
 }
 
 func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *provisioningv1.Cluster, newCluster *provisioningv1.Cluster) *admissionv1.AdmissionResponse {

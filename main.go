@@ -23,6 +23,12 @@ var progname string = "guestcluster-quota-webhook"
 var DENY int = 1
 var LOGONLY int = 2
 
+const (
+	DefaultCertRenewalPeriod = 30 * 24 * 60 // 30 days in minutes
+	MinCertRenewalPeriod     = 1 * 24 * 60  // 1 day in minutes
+	MaxCertRenewalPeriod     = 90 * 24 * 60 // 90 days in minutes
+)
+
 var certRenewalPeriod int64
 
 func init() {
@@ -52,8 +58,12 @@ func main() {
 
 	certRenewalPeriod, err = strconv.ParseInt(os.Getenv("CERTRENEWALPERIOD"), 10, 64)
 	if err != nil || certRenewalPeriod == 0 {
-		// default the cert renewal expire interval to 30 days
-		certRenewalPeriod = 30 * 24 * 60
+		certRenewalPeriod = DefaultCertRenewalPeriod
+		log.Infof("Using default cert renewal period: %d minutes", certRenewalPeriod)
+	} else if certRenewalPeriod < MinCertRenewalPeriod || certRenewalPeriod > MaxCertRenewalPeriod {
+		log.Warnf("Cert renewal period %d is outside recommended range [%d-%d], using default", 
+			certRenewalPeriod, MinCertRenewalPeriod, MaxCertRenewalPeriod)
+		certRenewalPeriod = DefaultCertRenewalPeriod
 	}
 
 	kubeconfig_file = os.Getenv("KUBECONFIG")
