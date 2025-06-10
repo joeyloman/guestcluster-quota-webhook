@@ -2,9 +2,7 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -14,7 +12,6 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -49,10 +46,7 @@ func (h *Handler) getResourceQuotaFromHarvester(kubeConfig []byte, namespace str
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	rqList, err := clientset.CoreV1().ResourceQuotas(namespace).List(ctx, metav1.ListOptions{})
+	rqList, err := clientset.CoreV1().ResourceQuotas(namespace).List(h.ctx, metav1.ListOptions{})
 	if err != nil {
 		return
 	}
@@ -111,108 +105,56 @@ func (h *Handler) getHarvesterClusterId(secretNamespace string, secretName strin
 }
 
 func (h *Handler) getHarvesterClusterCloudCredential(clusterName string) (cloudCredentialSecretName string, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Use dynamic client to get the cluster custom resource
-	// dynClient := h.dynamicClient // You must add dynamicClient to Handler struct and initialize it elsewhere
-	gvr := schema.GroupVersionResource{
-		Group:    "provisioning.cattle.io",
-		Version:  "v1",
-		Resource: "clusters",
-	}
-	unstructuredObj, err := h.dynamicClient.Resource(gvr).Namespace("fleet-default").Get(ctx, clusterName, metav1.GetOptions{})
-	if err != nil {
-		return cloudCredentialSecretName, fmt.Errorf("error while fetching cluster objects: %s", err.Error())
-	}
-
-	// Marshal and unmarshal to your struct
-	clusterRaw, err := json.Marshal(unstructuredObj.Object)
-	if err != nil {
-		return cloudCredentialSecretName, fmt.Errorf("error while marshalling cluster object: %s", err.Error())
-	}
-
-	c := ClusterStruct{}
-	if err = json.Unmarshal(clusterRaw, &c); err != nil {
-		return cloudCredentialSecretName, fmt.Errorf("error while unmarshall json: %s", err.Error())
-	}
-
-	// check if the cloudCredentialSecretName exists
-	if c.Spec.CloudCredentialSecretName == "" {
-		return cloudCredentialSecretName, fmt.Errorf("error cluster object has no cloudCredentialSecretName in the spec")
-	}
-
-	return c.Spec.CloudCredentialSecretName, err
-}
-
-func (h *Handler) getClusterNameFromHarvesterConfigName(logRef string, harvesterConfigName string) (clusterName string, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	gvr := schema.GroupVersionResource{
-		Group:    "provisioning.cattle.io",
-		Version:  "v1",
-		Resource: "clusters",
-	}
-	unstructuredList, err := h.dynamicClient.Resource(gvr).Namespace("fleet-default").List(ctx, metav1.ListOptions{})
+	cluster, err := h.GetProvisioningClusters("fleet-default", clusterName)
 	if err != nil {
 		return
 	}
 
-	clustersRaw, err := json.Marshal(unstructuredList.Items)
+	// check if the cloudCredentialSecretName exists
+	if cluster.Spec.CloudCredentialSecretName == "" {
+		return cloudCredentialSecretName, fmt.Errorf("error cluster object has no cloudCredentialSecretName in the spec")
+	}
+
+	return cluster.Spec.CloudCredentialSecretName, err
+}
+
+func (h *Handler) getClusterNameFromHarvesterConfigName(logRef string, harvesterConfigName string) (clusterName string, err error) {
+	list, err := h.ListProvisioningClusters()
 	if err != nil {
-		return "", fmt.Errorf("error marshalling cluster list: %s", err.Error())
+		return
 	}
 
-	c := ClustersStruct{}
-	if err = json.Unmarshal(clustersRaw, &c); err != nil {
-		return "", fmt.Errorf("error unmarshall json: %s", err.Error())
-	}
+	firstIndex := strings.Index(harvesterConfigName, "-")
+	lastIndex := strings.LastIndex(harvesterConfigName, "-")
 
-	// Use regex to extract cluster name from harvester config name
-	// Pattern: nc-<clustername>-<poolname>
-	re := regexp.MustCompile(`^nc-(.+)-[^-]+$`)
-	matches := re.FindStringSubmatch(harvesterConfigName)
-	if len(matches) < 2 {
-		return "", nil
-	}
+	for _, item := range list.Items {
+		log.Debugf("(getClusterNameFromHarvesterConfigName) %s checking clustername: [%s]", logRef, item.Name)
 
-	extractedName := matches[1]
-	log.Debugf("(getClusterNameFromHarvesterConfigName) %s extracted cluster name candidate: [%s]", logRef, extractedName)
+		for i := 0; i < lastIndex; i++ {
+			log.Tracef("(getClusterNameFromHarvesterConfigName) %s [i=%d] checking harvesterConfigName: [%s]", logRef, i, harvesterConfigName[firstIndex+1:lastIndex-i])
 
-	// Verify the extracted name exists in the cluster list
-	for _, item := range c.Items {
-		if item.Metadata.Name == extractedName {
-			log.Debugf("(getClusterNameFromHarvesterConfigName) %s found matching cluster: [%s]", logRef, item.Metadata.Name)
-			return item.Metadata.Name, nil
+			if harvesterConfigName[firstIndex+1:lastIndex-i] == item.Name {
+				// we found a match
+				return item.Name, err
+			}
+
+			if firstIndex+1 == lastIndex-i {
+				// end of string reached
+				break
+			}
 		}
 	}
 
-	return "", nil
+	return
 }
 
 func (h *Handler) getHarvesterConfig(harvesterConfigName string) (harvesterConfig HarvesterConfig, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 
-	gvr := schema.GroupVersionResource{
-		Group:    "rke-machine-config.cattle.io",
-		Version:  "v1",
-		Resource: "harvesterconfigs",
-	}
-	unstructuredObj, err := h.dynamicClient.Resource(gvr).Namespace("fleet-default").Get(ctx, harvesterConfigName, metav1.GetOptions{})
+	obj, err := h.GetHarvesterConfigs("fleet-default", harvesterConfigName)
 	if err != nil {
-		return harvesterConfig, fmt.Errorf("error while getting Harvester Config object: %s", err.Error())
+		return
 	}
-
-	harvesterConfigRaw, err := json.Marshal(unstructuredObj.Object)
-	if err != nil {
-		return harvesterConfig, fmt.Errorf("error while marshalling Harvester Config object: %s", err.Error())
-	}
-
-	if err = json.Unmarshal(harvesterConfigRaw, &harvesterConfig); err != nil {
-		return harvesterConfig, fmt.Errorf("error while unmarshall json: %s", err.Error())
-	}
+	harvesterConfig = *obj
 
 	return
 }
