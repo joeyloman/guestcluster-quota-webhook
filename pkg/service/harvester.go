@@ -1,11 +1,9 @@
 package service
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	provisioningv1 "github.com/rancher/rancher/pkg/apis/provisioning.cattle.io/v1"
 	log "github.com/sirupsen/logrus"
@@ -77,10 +75,7 @@ func (h *Handler) getResourceQuotaFromHarvester(kubeConfig []byte, namespace str
 }
 
 func (h *Handler) getHarvesterKubeConfig(clusterId string) (kubeConfig []byte, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	harvesterKubeConfigSecret, err := h.clientset.CoreV1().Secrets("fleet-default").Get(ctx, fmt.Sprintf("%s-kubeconfig", clusterId), metav1.GetOptions{})
+	harvesterKubeConfigSecret, err := h.clientset.CoreV1().Secrets("fleet-default").Get(h.ctx, fmt.Sprintf("%s-kubeconfig", clusterId), metav1.GetOptions{})
 	if err != nil {
 		return kubeConfig, fmt.Errorf("error while fetching the Harvester kubeconfig secret contents: %s", err.Error())
 	}
@@ -91,10 +86,7 @@ func (h *Handler) getHarvesterKubeConfig(clusterId string) (kubeConfig []byte, e
 }
 
 func (h *Handler) getHarvesterClusterId(secretNamespace string, secretName string) (clusterId string, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	cloudCredentialSecret, err := h.clientset.CoreV1().Secrets(secretNamespace).Get(ctx, secretName, metav1.GetOptions{})
+	cloudCredentialSecret, err := h.clientset.CoreV1().Secrets(secretNamespace).Get(h.ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		return clusterId, fmt.Errorf("error while fetching the cloud credential secret contents: %s", err.Error())
 	}
@@ -149,7 +141,6 @@ func (h *Handler) getClusterNameFromHarvesterConfigName(logRef string, harvester
 }
 
 func (h *Handler) getHarvesterConfig(harvesterConfigName string) (harvesterConfig HarvesterConfig, err error) {
-
 	obj, err := h.GetHarvesterConfigs("fleet-default", harvesterConfigName)
 	if err != nil {
 		return
