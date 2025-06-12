@@ -1,8 +1,6 @@
 package service
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -46,7 +44,7 @@ func (h *Handler) getResourceQuotaFromHarvester(kubeConfig []byte, namespace str
 		return
 	}
 
-	rqList, err := clientset.CoreV1().ResourceQuotas(namespace).List(context.TODO(), metav1.ListOptions{})
+	rqList, err := clientset.CoreV1().ResourceQuotas(namespace).List(h.ctx, metav1.ListOptions{})
 	if err != nil {
 		return
 	}
@@ -77,7 +75,7 @@ func (h *Handler) getResourceQuotaFromHarvester(kubeConfig []byte, namespace str
 }
 
 func (h *Handler) getHarvesterKubeConfig(clusterId string) (kubeConfig []byte, err error) {
-	harvesterKubeConfigSecret, err := h.clientset.CoreV1().Secrets("fleet-default").Get(context.TODO(), fmt.Sprintf("%s-kubeconfig", clusterId), metav1.GetOptions{})
+	harvesterKubeConfigSecret, err := h.clientset.CoreV1().Secrets("fleet-default").Get(h.ctx, fmt.Sprintf("%s-kubeconfig", clusterId), metav1.GetOptions{})
 	if err != nil {
 		return kubeConfig, fmt.Errorf("error while fetching the Harvester kubeconfig secret contents: %s", err.Error())
 	}
@@ -88,7 +86,7 @@ func (h *Handler) getHarvesterKubeConfig(clusterId string) (kubeConfig []byte, e
 }
 
 func (h *Handler) getHarvesterClusterId(secretNamespace string, secretName string) (clusterId string, err error) {
-	cloudCredentialSecret, err := h.clientset.CoreV1().Secrets(secretNamespace).Get(context.TODO(), secretName, metav1.GetOptions{})
+	cloudCredentialSecret, err := h.clientset.CoreV1().Secrets(secretNamespace).Get(h.ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		return clusterId, fmt.Errorf("error while fetching the cloud credential secret contents: %s", err.Error())
 	}
@@ -99,47 +97,37 @@ func (h *Handler) getHarvesterClusterId(secretNamespace string, secretName strin
 }
 
 func (h *Handler) getHarvesterClusterCloudCredential(clusterName string) (cloudCredentialSecretName string, err error) {
-	cluster, err := h.clientset.RESTClient().Get().AbsPath("/apis/provisioning.cattle.io/v1").Namespace("fleet-default").Resource("clusters").Name(clusterName).DoRaw(context.TODO())
-	if err != nil {
-		return cloudCredentialSecretName, fmt.Errorf("error while fetching cluster objects: %s", err.Error())
-	}
-
-	c := ClusterStruct{}
-	if err = json.Unmarshal(cluster, &c); err != nil {
-		return cloudCredentialSecretName, fmt.Errorf("error while unmarshall json: %s", err.Error())
-	}
-
-	// check if the cloudCredentialSecretName exists
-	if c.Spec.CloudCredentialSecretName == "" {
-		return cloudCredentialSecretName, fmt.Errorf("error cluster object has no cloudCredentialSecretName in the spec")
-	}
-
-	return c.Spec.CloudCredentialSecretName, err
-}
-
-func (h *Handler) getClusterNameFromHarvesterConfigName(logRef string, harvesterConfigName string) (clusterName string, err error) {
-	clusters, err := h.clientset.RESTClient().Get().AbsPath("/apis/provisioning.cattle.io/v1").Namespace("fleet-default").Resource("clusters").DoRaw(context.TODO())
+	cluster, err := h.GetProvisioningClusters("fleet-default", clusterName)
 	if err != nil {
 		return
 	}
 
-	c := ClustersStruct{}
-	if err = json.Unmarshal(clusters, &c); err != nil {
-		return "", fmt.Errorf("error unmarshall json: %s", err.Error())
+	// check if the cloudCredentialSecretName exists
+	if cluster.Spec.CloudCredentialSecretName == "" {
+		return cloudCredentialSecretName, fmt.Errorf("error cluster object has no cloudCredentialSecretName in the spec")
+	}
+
+	return cluster.Spec.CloudCredentialSecretName, err
+}
+
+func (h *Handler) getClusterNameFromHarvesterConfigName(logRef string, harvesterConfigName string) (clusterName string, err error) {
+	list, err := h.ListProvisioningClusters()
+	if err != nil {
+		return
 	}
 
 	firstIndex := strings.Index(harvesterConfigName, "-")
 	lastIndex := strings.LastIndex(harvesterConfigName, "-")
 
-	for _, item := range c.Items {
-		log.Debugf("(getClusterNameFromHarvesterConfigName) %s checking clustername: [%s]", logRef, item.Metadata.Name)
+	for _, item := range list.Items {
+		log.Debugf("(getClusterNameFromHarvesterConfigName) %s checking clustername: [%s]", logRef, item.Name)
 
 		for i := 0; i < lastIndex; i++ {
 			log.Tracef("(getClusterNameFromHarvesterConfigName) %s [i=%d] checking harvesterConfigName: [%s]", logRef, i, harvesterConfigName[firstIndex+1:lastIndex-i])
 
-			if harvesterConfigName[firstIndex+1:lastIndex-i] == item.Metadata.Name {
+			if harvesterConfigName[firstIndex+1:lastIndex-i] == item.Name {
 				// we found a match
-				return item.Metadata.Name, err
+				return item.Name, err
 			}
 
 			if firstIndex+1 == lastIndex-i {
@@ -153,14 +141,11 @@ func (h *Handler) getClusterNameFromHarvesterConfigName(logRef string, harvester
 }
 
 func (h *Handler) getHarvesterConfig(harvesterConfigName string) (harvesterConfig HarvesterConfig, err error) {
-	harvesterConfigRaw, err := h.clientset.RESTClient().Get().AbsPath("/apis/rke-machine-config.cattle.io/v1").Namespace("fleet-default").Resource("harvesterconfigs").Name(harvesterConfigName).DoRaw(context.TODO())
+	obj, err := h.GetHarvesterConfigs("fleet-default", harvesterConfigName)
 	if err != nil {
-		return harvesterConfig, fmt.Errorf("error while getting Harvester Config object: %s", err.Error())
+		return
 	}
-
-	if err = json.Unmarshal(harvesterConfigRaw, &harvesterConfig); err != nil {
-		return harvesterConfig, fmt.Errorf("error while unmarshall json: %s", err.Error())
-	}
+	harvesterConfig = *obj
 
 	return
 }
