@@ -25,11 +25,10 @@ import (
 // 4) Updates HarvesterConfig object multiple times
 
 type Handler struct {
-	ctx         context.Context
-	httpServer  *http.Server
-	kubeConfig  string
-	kubeContext string
-	// clientset   *kubernetes.Clientset
+	ctx           context.Context
+	httpServer    *http.Server
+	kubeConfig    string
+	kubeContext   string
 	clientset     kubernetes.Interface
 	dynamicClient dynamic.Interface
 	operateMode   int
