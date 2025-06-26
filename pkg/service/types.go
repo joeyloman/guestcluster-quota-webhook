@@ -75,7 +75,7 @@ type HarvesterConfig struct {
 	// NetworkName  string `json:"networkname,omitempty"`
 	// NetworkModel string `json:"networkmodel,omitempty"`
 
-	// NetworkInfo *NetworkInfo `json:"networkinfo,omitempty"`
+	NetworkInfo string `json:"networkinfo,omitempty"`
 
 	// CloudConfig string `json:"cloudconfig,omitempty"`
 	// UserData    string `json:"userdata,omitempty"`
@@ -103,8 +103,23 @@ type Disk struct {
 	// HotPlugAble bool `json:"hotplugable,omitempty"`
 }
 
+type NetworkInfo struct {
+	Interfaces []NetworkInterface `json:"interfaces,omitempty"`
+}
+
+type NetworkInterface struct {
+	NetworkName string `json:"networkName,omitempty"`
+	MacAddress  string `json:"macAddress,omitempty"`
+}
+
 func UnmarshalDiskInfo(data []byte) (DiskInfo, error) {
 	var r DiskInfo
+	err := json.Unmarshal(data, &r)
+	return r, err
+}
+
+func UnmarshalNetworkInfo(data []byte) (NetworkInfo, error) {
+	var r NetworkInfo
 	err := json.Unmarshal(data, &r)
 	return r, err
 }

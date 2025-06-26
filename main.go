@@ -61,7 +61,7 @@ func main() {
 		certRenewalPeriod = DefaultCertRenewalPeriod
 		log.Infof("Using default cert renewal period: %d minutes", certRenewalPeriod)
 	} else if certRenewalPeriod < MinCertRenewalPeriod || certRenewalPeriod > MaxCertRenewalPeriod {
-		log.Warnf("Cert renewal period %d is outside recommended range [%d-%d], using default", 
+		log.Warnf("Cert renewal period %d is outside recommended range [%d-%d], using default",
 			certRenewalPeriod, MinCertRenewalPeriod, MaxCertRenewalPeriod)
 		certRenewalPeriod = DefaultCertRenewalPeriod
 	}
@@ -106,6 +106,7 @@ func main() {
 		ctx,
 		kubeconfig_file,
 		kubeconfig_context,
+		kubenamespace,
 		operateMode,
 		metricsHandler,
 	)

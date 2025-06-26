@@ -37,6 +37,26 @@ Therefore we added the following extra input checks for:
 - Image Disks
 - Machine Pool Count
 
+## kubevirt-ip-helper integration
+
+Since v0.6.0 there is also kubevirt-ip-helper (https://github.com/joeyloman/kubevirt-ip-helper) integration which checks for available IP addresses in the Harvester backend networks. If the DHCP network is out of IP addresses the guestcluster-quota-webhook detects this and will decline the cluster creation or update request instead of fire and forget it and leave it up to the Harvester backend.
+
+If you have multiple networks configured in Harvester and you want to free up some IP addresses by preventing new cluster creations in a specific network then you can configure some reservations in the *kubevirt-ip-helper-networks* ConfigMap. The ConfigMap should look like this:
+
+```YAML
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubevirt-ip-helper-networks
+data:
+  <first_harvester_cluster_name>_<first_harvester_network_namespace>_<first_harvester_network_name>: "<ip reservation count>"
+  <second_harvester_cluster_name>_<second_harvester_network_namespace>_<second_harvester_network_name>: "<ip reservation count>"
+```
+
+Where the `<\*_harvester_cluster_name>` will be for example "harvester-cluster1", the `<\*_harvester_network_namespace>` "harvester-public" and `<second_harvester_network_name>` "public-vlan-1".
+
+If this ConfigMap doesn't exists or doesn't have any data, then the integration will be disabled.
+
 ## Prerequisites
 
 The following components need to be installed/configured to use the guestcluster-quota-webhook:
