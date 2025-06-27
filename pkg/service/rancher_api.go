@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	managementv3 "github.com/rancher/rancher/pkg/apis/management.cattle.io/v3"
 	provisioningv1 "github.com/rancher/rancher/pkg/apis/provisioning.cattle.io/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -42,6 +43,45 @@ func (h *Handler) GetProvisioningClusters(namespace string, name string) (*provi
 	}
 
 	var item provisioningv1.Cluster
+	if err = runtime.DefaultUnstructuredConverter.FromUnstructured(obj.UnstructuredContent(), &item); err != nil {
+		return nil, fmt.Errorf("error parsing cluster data: %s", err.Error())
+	}
+
+	return &item, nil
+}
+
+func (h *Handler) ListManagementClusters() (*managementv3.ClusterList, error) {
+	gvr := schema.GroupVersionResource{
+		Group:    "management.cattle.io",
+		Version:  "v3",
+		Resource: "clusters",
+	}
+
+	list, err := h.dynamicClient.Resource(gvr).List(h.ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("error gathering cluster list: %s", err.Error())
+	}
+
+	var items managementv3.ClusterList
+	if err = runtime.DefaultUnstructuredConverter.FromUnstructured(list.UnstructuredContent(), &items); err != nil {
+		return nil, fmt.Errorf("error parsing cluster list: %s", err.Error())
+	}
+
+	return &items, nil
+}
+
+func (h *Handler) GetManagementClusters(name string) (*managementv3.Cluster, error) {
+	gvr := schema.GroupVersionResource{
+		Group:    "management.cattle.io",
+		Version:  "v3",
+		Resource: "clusters",
+	}
+	obj, err := h.dynamicClient.Resource(gvr).Get(h.ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("error while fetching cluster objects: %s", err.Error())
+	}
+
+	var item managementv3.Cluster
 	if err = runtime.DefaultUnstructuredConverter.FromUnstructured(obj.UnstructuredContent(), &item); err != nil {
 		return nil, fmt.Errorf("error parsing cluster data: %s", err.Error())
 	}

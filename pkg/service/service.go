@@ -25,23 +25,25 @@ import (
 // 4) Updates HarvesterConfig object multiple times
 
 type Handler struct {
-	ctx           context.Context
-	httpServer    *http.Server
-	kubeConfig    string
-	kubeContext   string
-	clientset     kubernetes.Interface
-	dynamicClient dynamic.Interface
-	operateMode   int
-	metrics       *metrics.MetricsAllocator
+	ctx              context.Context
+	httpServer       *http.Server
+	kubeConfig       string
+	kubeContext      string
+	clientset        kubernetes.Interface
+	dynamicClient    dynamic.Interface
+	webhookNamespace string
+	operateMode      int
+	metrics          *metrics.MetricsAllocator
 }
 
-func Register(ctx context.Context, kubeConfig string, kubeContext string, operateMode int, metrics *metrics.MetricsAllocator) *Handler {
+func Register(ctx context.Context, kubeConfig string, kubeContext string, webhookNamespace string, operateMode int, metrics *metrics.MetricsAllocator) *Handler {
 	return &Handler{
-		ctx:         ctx,
-		kubeConfig:  kubeConfig,
-		kubeContext: kubeContext,
-		operateMode: operateMode,
-		metrics:     metrics,
+		ctx:              ctx,
+		kubeConfig:       kubeConfig,
+		kubeContext:      kubeContext,
+		webhookNamespace: webhookNamespace,
+		operateMode:      operateMode,
+		metrics:          metrics,
 	}
 }
 
@@ -135,6 +137,15 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 	incPoolResources.MemorySizeBytes = 0
 	incPoolResources.StorageSizeBytes = 0
 
+	// get the harvester cluster/network data
+	kihClusterNetworks, err := h.getKubeVirtIpHelperConfig()
+	if err != nil {
+		log.Errorf("(validateCluster) %s error while gathering the cluster/network data: %s", logRef, err.Error())
+	}
+
+	// store the extra IP count per network
+	extraIPsNeeded := make(map[string]int64)
+
 	// first detect the pool increases
 	for _, newMpool := range newCluster.Spec.RKEConfig.MachinePools {
 		// Rancher does not filter all inputs properly and accepts negative pool numbers
@@ -186,6 +197,17 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 		incPoolResources.MilliCPUs += poolSizes.MilliCPUs * int64(*newMpool.Quantity-*oldMpool.Quantity)
 		incPoolResources.MemorySizeBytes += poolSizes.MemorySizeBytes * int64(*newMpool.Quantity-*oldMpool.Quantity)
 		incPoolResources.StorageSizeBytes += poolSizes.StorageSizeBytes * int64(*newMpool.Quantity-*oldMpool.Quantity)
+
+		if len(kihClusterNetworks) > 0 {
+			networkInfo, err := h.getHarvesterNetworks(logRef, &harvesterConfig)
+			if err != nil {
+				log.Errorf("(validateHarvesterConfig) %s error while gathering Harvester networks: %s", logRef, err.Error())
+				h.metrics.UpdateLogStatus("error")
+			}
+			for _, network := range networkInfo.Interfaces {
+				extraIPsNeeded[network.NetworkName] += int64(*newMpool.Quantity - *oldMpool.Quantity)
+			}
+		}
 	}
 
 	// then detect the pool removals
@@ -227,6 +249,9 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 			incPoolResources.MilliCPUs -= poolSizes.MilliCPUs * int64(*oldMpool.Quantity)
 			incPoolResources.MemorySizeBytes -= poolSizes.MemorySizeBytes * int64(*oldMpool.Quantity)
 			incPoolResources.StorageSizeBytes -= poolSizes.StorageSizeBytes * int64(*oldMpool.Quantity)
+
+			// we don't have to remove IP's from extraIPsNeeded, because the nodes could be deleted after the creation of new/updated VMs
+			// which could then result in IPs not available.
 		}
 	}
 
@@ -251,6 +276,44 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 		return &admissionv1.AdmissionResponse{
 			UID:     ar.Request.UID,
 			Allowed: true,
+		}
+	}
+
+	if len(kihClusterNetworks) > 0 {
+		for network, ipCount := range extraIPsNeeded {
+			ipsLeft, err := h.getIPPoolFromHarvester(logRef, network, newCluster.Spec.CloudCredentialSecretName)
+			if err != nil {
+				log.Errorf("(validateCluster) %s error while gathering the IPs left from the DHCP pool: %s", logRef, err.Error())
+				h.metrics.UpdateLogStatus("error")
+			}
+			log.Debugf("(validateCluster) %s there are %d IP addresses left in network %s", logRef, ipsLeft, network)
+
+			harvesterClusterName, err := h.getHarvesterClusterName(logRef, newCluster.Spec.CloudCredentialSecretName)
+			if err != nil {
+				log.Errorf("(validateCluster) %s error while gathering Harvester Cluster Name: %s", logRef, err.Error())
+				h.metrics.UpdateLogStatus("error")
+			}
+			log.Debugf("(validateCluster) %s %d IP reservations found for cluster %s", logRef, kihClusterNetworks[harvesterClusterName][network], harvesterClusterName)
+
+			// if the cluster is new, the kihClusterNetworks IP reservations should be applied
+			var ipsNeeded int64 = 0
+			if oldCluster.Name == "" {
+				ipsNeeded = ipCount + kihClusterNetworks[harvesterClusterName][network]
+			} else {
+				ipsNeeded = ipCount
+			}
+
+			if (ipsLeft - ipsNeeded) < 1 {
+				log.Errorf("(validateCluster) %s there are no free IP addresses left in network: %s", logRef, network)
+				h.metrics.UpdateAppActions("Cluster", newCluster.Name, "block")
+
+				webhookMessage := fmt.Sprintf("There are no free IP addresses left in network [%s], please choose another network in your pool settings", network)
+				return &admissionv1.AdmissionResponse{
+					UID:     ar.Request.UID,
+					Allowed: false,
+					Result:  &metav1.Status{Message: webhookMessage},
+				}
+			}
 		}
 	}
 
@@ -501,6 +564,35 @@ func (h *Handler) validateHarvesterConfig(ar *admissionv1.AdmissionReview, oldHa
 		return &admissionv1.AdmissionResponse{
 			UID:     ar.Request.UID,
 			Allowed: true,
+		}
+	}
+
+	networkInfo, err := h.getHarvesterNetworks(logRef, newHarvesterConfig)
+	if err != nil {
+		log.Errorf("(validateHarvesterConfig) %s error while gathering Harvester networks: %s", logRef, err.Error())
+		h.metrics.UpdateLogStatus("error")
+	}
+
+	for _, network := range networkInfo.Interfaces {
+		ipsLeft, err := h.getIPPoolFromHarvester(logRef, network.NetworkName, cloudCredentialSecretName)
+		if err != nil {
+			log.Errorf("(validateHarvesterConfig) %s error while gathering Harvester resource quota: %s", logRef, err.Error())
+			h.metrics.UpdateLogStatus("error")
+		}
+		log.Debugf("(validateHarvesterConfig) %s there are %d IP addresses left in network %s", logRef, ipsLeft, network.NetworkName)
+
+		// HarvesterConfigs cannot be catched as a new cluster, so we shouldn't substract the IP Reservations from the ipsLeft.
+		// The IP Reservations will only be applied in the validateCluster function when clusters are newly deployed.
+		if ipsLeft < 1 {
+			log.Errorf("(validateHarvesterConfig) %s there are no free IP addresses left in network: %s", logRef, network.NetworkName)
+			h.metrics.UpdateAppActions("HarvesterConfig", newHarvesterConfig.Name, "block")
+
+			webhookMessage := fmt.Sprintf("There are no free IP addresses left in network [%s], please choose another network in your pool settings", network.NetworkName)
+			return &admissionv1.AdmissionResponse{
+				UID:     ar.Request.UID,
+				Allowed: false,
+				Result:  &metav1.Status{Message: webhookMessage},
+			}
 		}
 	}
 

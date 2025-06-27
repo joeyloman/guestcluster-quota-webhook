@@ -15,16 +15,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes/fake"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestRegister(t *testing.T) {
 	ctx := context.Background()
 	metricsHandler := metrics.NewMetricsAllocator()
-	
-	handler := Register(ctx, "test-config", "test-context", DENY, metricsHandler)
-	
+
+	handler := Register(ctx, "test-config", "test-context", "test-namespace", DENY, metricsHandler)
+
 	if handler.ctx != ctx {
 		t.Error("Context not set correctly")
 	}
@@ -178,13 +178,13 @@ func TestValidateCluster(t *testing.T) {
 					UID: types.UID("test-uid"),
 				},
 			}
-			
+
 			response := h.validateCluster(ar, tt.oldCluster, tt.newCluster)
-			
+
 			if response.Allowed != tt.wantAllowed {
 				t.Errorf("validateCluster() allowed = %v, want %v", response.Allowed, tt.wantAllowed)
 			}
-			
+
 			if tt.wantMessage != "" && response.Result != nil && response.Result.Message != tt.wantMessage {
 				t.Errorf("validateCluster() message = %v, want %v", response.Result.Message, tt.wantMessage)
 			}
@@ -205,14 +205,14 @@ func TestValidateHarvesterConfig(t *testing.T) {
 	}
 
 	tests := []struct {
-		name              string
+		name               string
 		oldHarvesterConfig *HarvesterConfig
 		newHarvesterConfig *HarvesterConfig
-		wantAllowed       bool
-		wantMessage       string
+		wantAllowed        bool
+		wantMessage        string
 	}{
 		{
-			name:              "new harvester config with invalid cpu",
+			name:               "new harvester config with invalid cpu",
 			oldHarvesterConfig: &HarvesterConfig{},
 			newHarvesterConfig: &HarvesterConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
@@ -224,7 +224,7 @@ func TestValidateHarvesterConfig(t *testing.T) {
 			wantMessage: "Error: CPUcount is invalid",
 		},
 		{
-			name:              "new harvester config with too low cpu",
+			name:               "new harvester config with too low cpu",
 			oldHarvesterConfig: &HarvesterConfig{},
 			newHarvesterConfig: &HarvesterConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
@@ -236,13 +236,13 @@ func TestValidateHarvesterConfig(t *testing.T) {
 			wantMessage: "Error: incorrect amount [0] of CPUs configured",
 		},
 		{
-			name:              "new harvester config with valid resources but no namespace",
+			name:               "new harvester config with valid resources but no namespace",
 			oldHarvesterConfig: &HarvesterConfig{},
 			newHarvesterConfig: &HarvesterConfig{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
-				CPUcount:   "2",
-				MemorySize: "4",
-				DiskSize:   "40",
+				ObjectMeta:  metav1.ObjectMeta{Name: "test-config"},
+				CPUcount:    "2",
+				MemorySize:  "4",
+				DiskSize:    "40",
 				VMNamespace: "",
 			},
 			wantAllowed: true,
@@ -308,13 +308,13 @@ func TestValidateHarvesterConfig(t *testing.T) {
 					UID: types.UID("test-uid"),
 				},
 			}
-			
+
 			response := h.validateHarvesterConfig(ar, tt.oldHarvesterConfig, tt.newHarvesterConfig)
-			
+
 			if response.Allowed != tt.wantAllowed {
 				t.Errorf("validateHarvesterConfig() allowed = %v, want %v", response.Allowed, tt.wantAllowed)
 			}
-			
+
 			if tt.wantMessage != "" && response.Result != nil && response.Result.Message != tt.wantMessage {
 				t.Errorf("validateHarvesterConfig() message = %v, want %v", response.Result.Message, tt.wantMessage)
 			}
@@ -363,20 +363,20 @@ func TestValidateClusterAdmission(t *testing.T) {
 	body, _ := json.Marshal(ar)
 	req := httptest.NewRequest("POST", "/validate-cluster", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	rr := httptest.NewRecorder()
-	
+
 	h.validateClusterAdmission(rr, req)
-	
+
 	if rr.Code != http.StatusOK {
 		t.Errorf("Expected status OK, got %v", rr.Code)
 	}
-	
+
 	var response admissionv1.AdmissionReview
 	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
 		t.Errorf("Failed to decode response: %v", err)
 	}
-	
+
 	if response.Response == nil {
 		t.Error("Expected response to be non-nil")
 	}
@@ -415,20 +415,20 @@ func TestValidateHarvesterConfigAdmission(t *testing.T) {
 	body, _ := json.Marshal(ar)
 	req := httptest.NewRequest("POST", "/validate-harvesterconfig", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	rr := httptest.NewRecorder()
-	
+
 	h.validateHarvesterConfigAdmission(rr, req)
-	
+
 	if rr.Code != http.StatusOK {
 		t.Errorf("Expected status OK, got %v", rr.Code)
 	}
-	
+
 	var response admissionv1.AdmissionReview
 	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
 		t.Errorf("Failed to decode response: %v", err)
 	}
-	
+
 	if response.Response == nil {
 		t.Error("Expected response to be non-nil")
 	}
@@ -442,18 +442,18 @@ func TestStop(t *testing.T) {
 			Addr: ":0", // Use port 0 for testing
 		},
 	}
-	
+
 	// Start a dummy server
 	go func() {
 		h.httpServer.ListenAndServe()
 	}()
-	
+
 	// Give the server time to start
 	// In real tests, you'd want to wait for the server to be ready
-	
+
 	cancel()
 	err := h.Stop()
-	
+
 	// The error might be http.ErrServerClosed which is expected
 	if err != nil && err != http.ErrServerClosed {
 		t.Errorf("Unexpected error stopping server: %v", err)
