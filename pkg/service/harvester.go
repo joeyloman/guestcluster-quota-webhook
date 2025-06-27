@@ -12,6 +12,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+
+	kihclientset "github.com/joeyloman/kubevirt-ip-helper/pkg/generated/clientset/versioned"
 )
 
 func (h *Handler) checkMachinePools(logRef string, machinePoolname string, machinePools2Check []provisioningv1.RKEMachinePool) provisioningv1.RKEMachinePool {
@@ -30,7 +32,7 @@ func (h *Handler) checkMachinePools(logRef string, machinePoolname string, machi
 
 func (h *Handler) getResourceQuotaFromHarvester(kubeConfig []byte, namespace string) (hardQuota HarvesterResourceQuota, usedQuota HarvesterResourceQuota, err error) {
 	if namespace == "" {
-		err = fmt.Errorf("(getResourceQuotaFromHarvester) error namespace should not be empty")
+		err = fmt.Errorf("error namespace should not be empty")
 		return
 	}
 
@@ -74,24 +76,59 @@ func (h *Handler) getResourceQuotaFromHarvester(kubeConfig []byte, namespace str
 	return
 }
 
-func (h *Handler) getHarvesterKubeConfig(clusterId string) (kubeConfig []byte, err error) {
+func (h *Handler) getHarvesterClusterId(logRef string, cloudCredentialSecretName string) (clusterId string, err error) {
+	// get the cloud credential secret name by splitting the secret object <namespace>:<secret>
+	cloudCredentialSecretNameSplitted := strings.Split(cloudCredentialSecretName, ":")
+	if len(cloudCredentialSecretNameSplitted) < 1 {
+		return "", fmt.Errorf("error cloudCredentialSecretName format is not correct")
+	}
+	cloudCredentialNamespace := cloudCredentialSecretNameSplitted[0]
+	cloudCredentialName := cloudCredentialSecretNameSplitted[1]
+	log.Debugf("(getHarvesterClusterId) %s cloudCredential [%s/%s]", logRef, cloudCredentialNamespace, cloudCredentialName)
+
+	cloudCredentialSecret, err := h.clientset.CoreV1().Secrets(cloudCredentialNamespace).Get(h.ctx, cloudCredentialName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("error while fetching the cloud credential secret contents: %s", err.Error())
+	}
+
+	clusterId = string(cloudCredentialSecret.Data["harvestercredentialConfig-clusterId"])
+	log.Debugf("(getHarvesterClusterId) %s Harvester clusterId found: %s", logRef, clusterId)
+
+	return
+}
+
+func (h *Handler) getHarvesterClusterName(logRef string, cloudCredentialSecretName string) (clusterName string, err error) {
+	clusterId, err := h.getHarvesterClusterId(logRef, cloudCredentialSecretName)
+	if err != nil {
+		return
+	}
+
+	cluster, err := h.GetManagementClusters(clusterId)
+	if err != nil {
+		return
+	}
+	log.Debugf("(getHarvesterClusterName) %s Harvester DisplayName found: %s", logRef, cluster.Spec.DisplayName)
+
+	// check if the Harvester Cluster Name exists
+	if cluster.Spec.DisplayName == "" {
+		return "", fmt.Errorf("error cluster object has no harvester clustername in the spec")
+	}
+
+	return cluster.Spec.DisplayName, err
+}
+
+func (h *Handler) getHarvesterKubeConfig(logRef string, cloudCredentialSecretName string) (kubeConfig []byte, err error) {
+	clusterId, err := h.getHarvesterClusterId(logRef, cloudCredentialSecretName)
+	if err != nil {
+		return
+	}
+
 	harvesterKubeConfigSecret, err := h.clientset.CoreV1().Secrets("fleet-default").Get(h.ctx, fmt.Sprintf("%s-kubeconfig", clusterId), metav1.GetOptions{})
 	if err != nil {
 		return kubeConfig, fmt.Errorf("error while fetching the Harvester kubeconfig secret contents: %s", err.Error())
 	}
 
 	kubeConfig = harvesterKubeConfigSecret.Data["value"]
-
-	return
-}
-
-func (h *Handler) getHarvesterClusterId(secretNamespace string, secretName string) (clusterId string, err error) {
-	cloudCredentialSecret, err := h.clientset.CoreV1().Secrets(secretNamespace).Get(h.ctx, secretName, metav1.GetOptions{})
-	if err != nil {
-		return clusterId, fmt.Errorf("error while fetching the cloud credential secret contents: %s", err.Error())
-	}
-
-	clusterId = string(cloudCredentialSecret.Data["harvestercredentialConfig-clusterId"])
 
 	return
 }
@@ -210,8 +247,8 @@ func (h *Handler) validatePoolSizes(poolResources *PoolResources) (err error) {
 
 func (h *Handler) checkPoolSizes(poolResources *PoolResources) (err error) {
 	// This check is for the following behavior:
-	// If the cpu, memory or storage values are too high, they will be a converted to a negative numer.
-	// Or if Rancher accepts negatove numbers it should prevents updates as well
+	// If the cpu, memory or storage values are too high, they will be converted to a negative numer.
+	// Or if Rancher accepts negative numbers it should prevent updates as well
 	if poolResources.MilliCPUs < 0 {
 		return fmt.Errorf("incorrect amount [%d] of CPUs configured", poolResources.MilliCPUs)
 	}
@@ -228,26 +265,7 @@ func (h *Handler) checkPoolSizes(poolResources *PoolResources) (err error) {
 }
 
 func (h *Handler) getHarvesterResourceQuota(logRef string, vmNamespace string, cloudCredentialSecretName string) (hardQuota HarvesterResourceQuota, usedQuota HarvesterResourceQuota, err error) {
-	cloudCredentialSecretNameSplitted := strings.Split(cloudCredentialSecretName, ":")
-
-	// get the cloud credential secret name by splitting the secret object <namespace>:<secret>
-	if len(cloudCredentialSecretNameSplitted) < 1 {
-		return hardQuota, usedQuota, fmt.Errorf("error cloudCredentialSecretName format is not correct")
-	}
-
-	cloudCredentialNamespace := cloudCredentialSecretNameSplitted[0]
-	cloudCredentialName := cloudCredentialSecretNameSplitted[1]
-
-	log.Debugf("(getHarvesterResourceQuota) %s cloudCredential [%s/%s]", logRef, cloudCredentialNamespace, cloudCredentialName)
-
-	clusterId, err := h.getHarvesterClusterId(cloudCredentialNamespace, cloudCredentialName)
-	if err != nil {
-		return hardQuota, usedQuota, fmt.Errorf("error while gathering Harvester cluster id: %s", err.Error())
-	}
-
-	log.Debugf("(getHarvesterResourceQuota) %s Harvester clusterId found: %s", logRef, clusterId)
-
-	kubeConfig, err := h.getHarvesterKubeConfig(clusterId)
+	kubeConfig, err := h.getHarvesterKubeConfig(logRef, cloudCredentialSecretName)
 	if err != nil {
 		return hardQuota, usedQuota, fmt.Errorf("error while gathering Harvester kubeconfig: %s", err.Error())
 	}
@@ -308,4 +326,71 @@ func (h *Handler) validateHarvesterQuota(logRef string, ar *admissionv1.Admissio
 		UID:     ar.Request.UID,
 		Allowed: true,
 	}
+}
+
+func (h *Handler) getHarvesterNetworks(logRef string, config *HarvesterConfig) (networkInfo NetworkInfo, err error) {
+	if config.NetworkInfo != "" {
+		networkInfo, err = UnmarshalNetworkInfo([]byte(config.NetworkInfo))
+		if err != nil {
+			return networkInfo, fmt.Errorf("cannnot decode networkInfo")
+		}
+
+		for _, network := range networkInfo.Interfaces {
+			log.Debugf("(getHarvesterNetworks) %s gathered HarvesterConfig networkName [%s]", logRef, network.NetworkName)
+		}
+	} else {
+		return networkInfo, fmt.Errorf("config.NetworkInfo is empty")
+	}
+
+	return
+}
+
+func (h *Handler) getIPPoolFromHarvester(logRef string, networkInfoName string, cloudCredentialSecretName string) (available int64, err error) {
+	if networkInfoName == "" {
+		err = fmt.Errorf("error networkName should not be empty")
+		return -1, err
+	}
+
+	// split the network name
+	networkNameSplitted := strings.Split(networkInfoName, "/")
+
+	// get the network name by splitting the object <namespace>/<name>
+	if len(networkNameSplitted) < 1 {
+		return -1, fmt.Errorf("error networkName format is not correct")
+	}
+
+	networkNamespace := networkNameSplitted[0]
+	networkName := networkNameSplitted[1]
+
+	log.Debugf("(getIPPoolFromHarvester) %s networkInfoName [%s/%s]", logRef, networkNamespace, networkName)
+
+	kubeConfig, err := h.getHarvesterKubeConfig(logRef, cloudCredentialSecretName)
+	if err != nil {
+		return -1, fmt.Errorf("error while gathering Harvester kubeconfig: %s", err.Error())
+	}
+
+	config, err := clientcmd.RESTConfigFromKubeConfig(kubeConfig)
+	if err != nil {
+		return -1, err
+	}
+
+	kihClientset, err := kihclientset.NewForConfig(config)
+	if err != nil {
+		return -1, err
+	}
+
+	// note: IPPool names should match the networkName otherwise this doesn't work
+	ippool, err := kihClientset.KubevirtiphelperV1().IPPools().Get(h.ctx, networkName, metav1.GetOptions{})
+	if err != nil {
+		return -1, fmt.Errorf("cannot get IPPool %s: %s", networkName, err.Error())
+	}
+
+	// check if the network name matches the spec.networkname of the IPPool
+	if networkInfoName != ippool.Spec.NetworkName {
+		return -1, fmt.Errorf("networkInfoName does not match the IPPool networkname: %s", networkInfoName)
+	}
+
+	log.Debugf("(getIPPoolFromHarvester) %s found IPPool [%s] with available IPS: %d", logRef, ippool.Spec.NetworkName, ippool.Status.IPv4.Available)
+
+	return int64(ippool.Status.IPv4.Available), err
 }
