@@ -37,9 +37,10 @@ func (h *Handler) getKubeVirtIpHelperConfig() (map[string]map[string]int64, erro
 			return nil, fmt.Errorf("error IP reservation count is invalid")
 		}
 
-		kihIpReservationsNetworkMap := make(map[string]int64)
-		kihIpReservationsNetworkMap[fmt.Sprintf("%s/%s", clusterNetworkStr[1], clusterNetworkStr[2])] = int64(IPcount)
-		kihIpReservationsClusterMap[clusterNetworkStr[0]] = kihIpReservationsNetworkMap
+		if _, exists := kihIpReservationsClusterMap[clusterNetworkStr[0]]; !exists {
+			kihIpReservationsClusterMap[clusterNetworkStr[0]] = make(map[string]int64)
+		}
+		kihIpReservationsClusterMap[clusterNetworkStr[0]][fmt.Sprintf("%s/%s", clusterNetworkStr[1], clusterNetworkStr[2])] = int64(IPcount)
 	}
 
 	return kihIpReservationsClusterMap, err

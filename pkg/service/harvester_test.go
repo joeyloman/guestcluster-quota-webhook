@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
+
+	ippoolv1 "github.com/joeyloman/kubevirt-ip-helper/pkg/apis/iphelper.kubevirt.io/v1"
 )
 
 func TestCheckMachinePools(t *testing.T) {
@@ -75,6 +78,472 @@ func TestCheckMachinePools(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetHarvesterClusterId(t *testing.T) {
+	h := &Handler{
+		clientset: fake.NewSimpleClientset(),
+	}
+
+	testSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-secret",
+			Namespace: "test-ns",
+		},
+		Data: map[string][]byte{
+			"harvestercredentialConfig-clusterId": []byte("cluster-id-123"),
+		},
+	}
+
+	_, err := h.clientset.CoreV1().Secrets("test-ns").Create(h.ctx, testSecret, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Error creating test secret: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		secretName  string
+		expectedId  string
+		expectError bool
+	}{
+		{
+			name:        "valid secret",
+			secretName:  "test-ns:test-secret",
+			expectedId:  "cluster-id-123",
+			expectError: false,
+		},
+		{
+			name:        "invalid secret format",
+			secretName:  "invalid-format",
+			expectedId:  "",
+			expectError: true,
+		},
+		{
+			name:        "non-existent secret",
+			secretName:  "test-ns:missing-secret",
+			expectedId:  "",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id, err := h.getHarvesterClusterId("test", tt.secretName)
+
+			if (err != nil) != tt.expectError {
+				t.Errorf("getHarvesterClusterId() error = %v, wantErr %v", err, tt.expectError)
+			}
+
+			if id != tt.expectedId {
+				t.Errorf("Expected ID %q, got %q", tt.expectedId, id)
+			}
+		})
+	}
+}
+
+func TestGetHarvesterClusterName(t *testing.T) {
+	h := &Handler{
+		clientset: fake.NewSimpleClientset(),
+	}
+
+	testSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-secret",
+			Namespace: "test-ns",
+		},
+		Data: map[string][]byte{
+			"harvestercredentialConfig-clusterId": []byte("cluster-id-123"),
+		},
+	}
+
+	_, err := h.clientset.CoreV1().Secrets("test-ns").Create(h.ctx, testSecret, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Error creating test secret: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		secretName  string
+		expected    string
+		expectError bool
+	}{
+		{
+			name:        "valid secret",
+			secretName:  "test-ns:test-secret",
+			expected:    "",
+			expectError: true,
+		},
+		{
+			name:        "invalid secret",
+			secretName:  "test-ns:missing-secret",
+			expected:    "",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			name, err := h.getHarvesterClusterName("test", tt.secretName)
+
+			if (err != nil) != tt.expectError {
+				t.Errorf("getHarvesterClusterName() error = %v, wantErr %v", err, tt.expectError)
+			}
+
+			if name != tt.expected {
+				t.Errorf("Expected name %q, got %q", tt.expected, name)
+			}
+		})
+	}
+}
+
+func TestGetHarvesterKubeConfig(t *testing.T) {
+	h := &Handler{
+		clientset: fake.NewSimpleClientset(),
+	}
+
+	testSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cluster-id-123-kubeconfig",
+			Namespace: "fleet-default",
+		},
+		Data: map[string][]byte{
+			"value": []byte("kubeconfig-data"),
+		},
+	}
+
+	_, err := h.clientset.CoreV1().Secrets("fleet-default").Create(h.ctx, testSecret, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Error creating test secret: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		secretName  string
+		expected    string
+		expectError bool
+	}{
+		{
+			name:        "valid kubeconfig",
+			secretName:  "test-ns:test-secret",
+			expected:    "",
+			expectError: true,
+		},
+		{
+			name:        "invalid cloud credential",
+			secretName:  "test-ns:invalid-secret",
+			expected:    "",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kubeconfig, err := h.getHarvesterKubeConfig("test", tt.secretName)
+
+			if (err != nil) != tt.expectError {
+				t.Errorf("getHarvesterKubeConfig() error = %v, wantErr %v", err, tt.expectError)
+			}
+
+			if string(kubeconfig) != tt.expected {
+				t.Errorf("Expected kubeconfig %q, got %q", tt.expected, kubeconfig)
+			}
+		})
+	}
+}
+
+func TestGetHarvesterClusterCloudCredential(t *testing.T) {
+	h := &Handler{}
+
+	tests := []struct {
+		name        string
+		clusterName string
+		expected    string
+		expectError bool
+	}{
+		{
+			name:        "valid cluster",
+			clusterName: "test-cluster",
+			expected:    "",
+			expectError: true,
+		},
+		{
+			name:        "invalid cluster",
+			clusterName: "missing-cluster",
+			expected:    "",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cred, err := h.getHarvesterClusterCloudCredential(tt.clusterName)
+
+			if (err != nil) != tt.expectError {
+				t.Errorf("getHarvesterClusterCloudCredential() error = %v, wantErr %v", err, tt.expectError)
+			}
+
+			if cred != tt.expected {
+				t.Errorf("Expected credential %q, got %q", tt.expected, cred)
+			}
+		})
+	}
+}
+
+func TestGetHarvesterConfig(t *testing.T) {
+	h := &Handler{
+		harvester: &mockHarvesterClient{
+			configs: map[string]*HarvesterConfig{
+				"test-config": {
+					CPUcount:   "4",
+					MemorySize: "8",
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name        string
+		configName  string
+		expectedCPU string
+		expectError bool
+	}{
+		{
+			name:        "valid config",
+			configName:  "test-config",
+			expectedCPU: "4",
+			expectError: false,
+		},
+		{
+			name:        "invalid config",
+			configName:  "missing-config",
+			expectedCPU: "",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config, err := h.getHarvesterConfig(tt.configName)
+
+			if (err != nil) != tt.expectError {
+				t.Errorf("getHarvesterConfig() error = %v, wantErr %v", err, tt.expectError)
+			}
+
+			if !tt.expectError && config.CPUcount != tt.expectedCPU {
+				t.Errorf("Expected CPU count %q, got %q", tt.expectedCPU, config.CPUcount)
+			}
+		})
+	}
+}
+
+func TestGetHarvesterNetworks(t *testing.T) {
+	h := &Handler{}
+
+	tests := []struct {
+		name        string
+		config      *HarvesterConfig
+		expected    int
+		expectError bool
+	}{
+		{
+			name: "valid network info",
+			config: &HarvesterConfig{
+				NetworkInfo: `{"interfaces":[{"networkName":"net1"},{"networkName":"net2"}]}`,
+			},
+			expected:    2,
+			expectError: false,
+		},
+		{
+			name: "empty network info",
+			config: &HarvesterConfig{
+				NetworkInfo: "",
+			},
+			expected:    0,
+			expectError: true,
+		},
+		{
+			name: "invalid json",
+			config: &HarvesterConfig{
+				NetworkInfo: `{invalid}`,
+			},
+			expected:    0,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			networks, err := h.getHarvesterNetworks("test", tt.config)
+
+			if (err != nil) != tt.expectError {
+				t.Errorf("getHarvesterNetworks() error = %v, wantErr %v", err, tt.expectError)
+			}
+
+			if !tt.expectError && len(networks.Interfaces) != tt.expected {
+				t.Errorf("Expected %d networks, got %d", tt.expected, len(networks.Interfaces))
+			}
+		})
+	}
+}
+
+func TestGetIPPoolFromHarvester(t *testing.T) {
+	h := &Handler{
+		kih: &mockKihClient{
+			ippools: map[string]*ippoolv1.IPPool{
+				"test-network": {
+					Spec: ippoolv1.IPPoolSpec{
+						NetworkName: "default/test-network",
+					},
+					Status: ippoolv1.IPPoolStatus{
+						IPv4: ippoolv1.IPVersionStatus{
+							Available: 10,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name        string
+		networkName string
+		expected    int64
+		expectError bool
+	}{
+		{
+			name:        "valid network",
+			networkName: "default/test-network",
+			expected:    10,
+			expectError: false,
+		},
+		{
+			name:        "invalid network",
+			networkName: "default/missing-network",
+			expected:    -1,
+			expectError: true,
+		},
+		{
+			name:        "empty network",
+			networkName: "",
+			expected:    -1,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup mock to return kubeconfig
+			h.getHarvesterKubeConfig = func(logRef, secretName string) ([]byte, error) {
+				return []byte("mock-kubeconfig"), nil
+			}
+
+			available, err := h.getIPPoolFromHarvester("test", tt.networkName, "test-ns:test-secret")
+
+			if (err != nil) != tt.expectError {
+				t.Errorf("getIPPoolFromHarvester() error = %v, wantErr %v", err, tt.expectError)
+			}
+
+			if available != tt.expected {
+				t.Errorf("Expected available %d, got %d", tt.expected, available)
+			}
+		})
+	}
+}
+
+func TestGetHarvesterResourceQuota(t *testing.T) {
+	h := &Handler{}
+
+	tests := []struct {
+		name        string
+		vmNamespace string
+		expectedErr bool
+	}{
+		{
+			name:        "valid namespace",
+			vmNamespace: "test-ns",
+			expectedErr: false,
+		},
+		{
+			name:        "empty namespace",
+			vmNamespace: "",
+			expectedErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup mocks
+			h.getHarvesterKubeConfig = func(logRef, secretName string) ([]byte, error) {
+				return []byte("mock-kubeconfig"), nil
+			}
+
+			h.getResourceQuotaFromHarvester = func(kubeConfig []byte, namespace string) (HarvesterResourceQuota, HarvesterResourceQuota, error) {
+				if namespace == "" {
+					return HarvesterResourceQuota{}, HarvesterResourceQuota{}, fmt.Errorf("empty namespace")
+				}
+				return HarvesterResourceQuota{}, HarvesterResourceQuota{}, nil
+			}
+
+			_, _, err := h.getHarvesterResourceQuota("test", tt.vmNamespace, "test-ns:test-secret")
+
+			if (err != nil) != tt.expectedErr {
+				t.Errorf("getHarvesterResourceQuota() error = %v, wantErr %v", err, tt.expectedErr)
+			}
+		})
+	}
+}
+
+// Mock clients for testing
+type mockManagementClient struct {
+	clusters map[string]*provisioningv1.Cluster
+}
+
+func (m *mockManagementClient) GetManagementClusters(id string) (*provisioningv1.Cluster, error) {
+	if cluster, ok := m.clusters[id]; ok {
+		return cluster, nil
+	}
+	return nil, fmt.Errorf("cluster not found")
+}
+
+type mockProvisioningClient struct {
+	clusters map[string]*provisioningv1.Cluster
+}
+
+func (m *mockProvisioningClient) GetProvisioningClusters(namespace, name string) (*provisioningv1.Cluster, error) {
+	if cluster, ok := m.clusters[name]; ok {
+		return cluster, nil
+	}
+	return nil, fmt.Errorf("cluster not found")
+}
+
+func (m *mockProvisioningClient) ListProvisioningClusters() (*provisioningv1.ClusterList, error) {
+	items := make([]provisioningv1.Cluster, 0, len(m.clusters))
+	for _, cluster := range m.clusters {
+		items = append(items, *cluster)
+	}
+	return &provisioningv1.ClusterList{Items: items}, nil
+}
+
+type mockHarvesterClient struct {
+	configs map[string]*HarvesterConfig
+}
+
+func (m *mockHarvesterClient) GetHarvesterConfigs(namespace, name string) (*HarvesterConfig, error) {
+	if config, ok := m.configs[name]; ok {
+		return config, nil
+	}
+	return nil, fmt.Errorf("config not found")
+}
+
+type mockKihClient struct {
+	ippools map[string]*ippoolv1.IPPool
+}
+
+func (m *mockKihClient) GetIPPools(ctx context.Context, name string) (*ippoolv1.IPPool, error) {
+	if ippool, ok := m.ippools[name]; ok {
+		return ippool, nil
+	}
+	return nil, fmt.Errorf("ippool not found")
 }
 
 func TestGetHarvesterConfigPoolSizes(t *testing.T) {
