@@ -44,6 +44,7 @@ func init() {
 func main() {
 	var kubeconfig_file string
 	var kubenamespace string
+	var kihIpResCount int64
 
 	level, err := log.ParseLevel(os.Getenv("LOGLEVEL"))
 	if err == nil {
@@ -79,6 +80,13 @@ func main() {
 		kubenamespace = "kube-system"
 	}
 
+	kihIpResCount, err = strconv.ParseInt(os.Getenv("KUBEVIRT_IP_HELPER_DEFAULT_IPRESCOUNT"), 10, 64)
+	if err != nil || kihIpResCount == 0 {
+		kihIpResCount = 0
+	} else {
+		log.Infof("Using kubevirt-ip-helper default IP reservation count: %d", kihIpResCount)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	metricsHandler := metrics.Register()
@@ -109,6 +117,7 @@ func main() {
 		kubenamespace,
 		operateMode,
 		metricsHandler,
+		kihIpResCount,
 	)
 
 	configHandler.Init()

@@ -39,9 +39,9 @@ Therefore we added the following extra input checks for:
 
 ## kubevirt-ip-helper integration
 
-Since v0.6.0 there is also kubevirt-ip-helper (https://github.com/joeyloman/kubevirt-ip-helper) integration which checks for available IP addresses in the Harvester backend networks. If the DHCP network is out of IP addresses the guestcluster-quota-webhook detects this and will decline the cluster creation or update request instead of fire and forget it and leave it up to the Harvester backend.
+Since v0.6.x there is also kubevirt-ip-helper (https://github.com/joeyloman/kubevirt-ip-helper) integration which checks for available IP addresses in the Harvester backend networks. If the DHCP network is out of IP addresses the guestcluster-quota-webhook detects this and will decline the cluster creation or update request instead of fire and forget it and leave it up to the Harvester backend.
 
-If you have multiple networks configured in Harvester and you want to free up some IP addresses by preventing new cluster creations in a specific network then you can configure some reservations in the *kubevirt-ip-helper-networks* ConfigMap. The ConfigMap should look like this:
+If you have one or multiple networks configured in Harvester and you want to free up some IP addresses by preventing new cluster creations then you can set a default IP reservation count for all networks by setting the KUBEVIRT_IP_HELPER_DEFAULT_IPRESCOUNT ENV variable. Or if you want to configure this for a specific network you can configure some reservations in the *kubevirt-ip-helper-networks* ConfigMap. The ConfigMap should look like this:
 
 ```YAML
 apiVersion: v1
@@ -53,9 +53,11 @@ data:
   <second_harvester_cluster_name>_<second_harvester_network_namespace>_<second_harvester_network_name>: "<ip reservation count>"
 ```
 
-Where the `<\*_harvester_cluster_name>` will be for example "harvester-cluster1", the `<\*_harvester_network_namespace>` "harvester-public" and `<second_harvester_network_name>` "public-vlan-1".
+Where the `<*_harvester_cluster_name>` will be for example "harvester-cluster1", the `<*_harvester_network_namespace>` "harvester-public" and `<*_harvester_network_name>` "public-vlan-1".
 
-If this ConfigMap doesn't exists or doesn't have any data, then the integration will be disabled.
+Both ENV variable and ConfigMap settings can be combined, but the networks in the ConfigMap data will override the ENV variable setting for the specific network.
+
+If the ConfigMap doesn't exists or doesn't have any data and the KUBEVIRT_IP_HELPER_DEFAULT_IPRESCOUNT is not set, the integration will be disabled.
 
 ## Prerequisites
 

@@ -34,9 +34,10 @@ type Handler struct {
 	webhookNamespace string
 	operateMode      int
 	metrics          *metrics.MetricsAllocator
+	kihIpResCount    int64
 }
 
-func Register(ctx context.Context, kubeConfig string, kubeContext string, webhookNamespace string, operateMode int, metrics *metrics.MetricsAllocator) *Handler {
+func Register(ctx context.Context, kubeConfig string, kubeContext string, webhookNamespace string, operateMode int, metrics *metrics.MetricsAllocator, kihIpResCount int64) *Handler {
 	return &Handler{
 		ctx:              ctx,
 		kubeConfig:       kubeConfig,
@@ -44,6 +45,7 @@ func Register(ctx context.Context, kubeConfig string, kubeContext string, webhoo
 		webhookNamespace: webhookNamespace,
 		operateMode:      operateMode,
 		metrics:          metrics,
+		kihIpResCount:    kihIpResCount,
 	}
 }
 
@@ -198,7 +200,7 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 		incPoolResources.MemorySizeBytes += poolSizes.MemorySizeBytes * int64(*newMpool.Quantity-*oldMpool.Quantity)
 		incPoolResources.StorageSizeBytes += poolSizes.StorageSizeBytes * int64(*newMpool.Quantity-*oldMpool.Quantity)
 
-		if len(kihClusterNetworks) > 0 {
+		if len(kihClusterNetworks) > 0 || h.kihIpResCount > 0 {
 			networkInfo, err := h.getHarvesterNetworks(logRef, &harvesterConfig)
 			if err != nil {
 				log.Errorf("(validateHarvesterConfig) %s error while gathering Harvester networks: %s", logRef, err.Error())
@@ -279,7 +281,7 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 		}
 	}
 
-	if len(kihClusterNetworks) > 0 {
+	if len(kihClusterNetworks) > 0 || h.kihIpResCount > 0 {
 		for network, ipCount := range extraIPsNeeded {
 			ipsLeft, err := h.getIPPoolFromHarvester(logRef, network, newCluster.Spec.CloudCredentialSecretName)
 			if err != nil {
@@ -295,13 +297,19 @@ func (h *Handler) validateCluster(ar *admissionv1.AdmissionReview, oldCluster *p
 			}
 			log.Debugf("(validateCluster) %s %d IP reservations found for cluster %s", logRef, kihClusterNetworks[harvesterClusterName][network], harvesterClusterName)
 
-			// if the cluster is new, the kihClusterNetworks IP reservations should be applied
+			// if the cluster is new, the kihClusterNetworks IP reservations or the kihIpResCount should be applied
 			var ipsNeeded int64 = 0
 			if oldCluster.Name == "" {
-				ipsNeeded = ipCount + kihClusterNetworks[harvesterClusterName][network]
+				cfgCount, exists := kihClusterNetworks[harvesterClusterName][network]
+				if exists {
+					ipsNeeded = ipCount + cfgCount
+				} else {
+					ipsNeeded = ipCount + h.kihIpResCount
+				}
 			} else {
 				ipsNeeded = ipCount
 			}
+			log.Debugf("(validateCluster) %s there are %d IP addresses needed in network %s of cluster %s", logRef, ipsNeeded, network, harvesterClusterName)
 
 			if (ipsLeft - ipsNeeded) < 1 {
 				log.Errorf("(validateCluster) %s there are no free IP addresses left in network: %s", logRef, network)
