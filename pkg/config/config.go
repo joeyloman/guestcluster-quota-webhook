@@ -15,7 +15,7 @@ type Handler struct {
 	ctx               context.Context
 	kubeConfig        string
 	kubeContext       string
-	clientset         *kubernetes.Clientset
+	clientset         kubernetes.Interface
 	webhookNamespace  string
 	webhookName       string
 	webhookSecretName string
