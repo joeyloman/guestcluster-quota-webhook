@@ -1,6 +1,6 @@
 module github.com/joeyloman/guestcluster-quota-webhook
 
-go 1.24.4
+go 1.24.13
 
 replace k8s.io/client-go => k8s.io/client-go v0.27.6
 
@@ -76,7 +76,7 @@ require (
 	k8s.io/component-base v0.33.2 // indirect
 	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20250626183228-af0a60a813f8 // indirect
-	k8s.io/kubernetes v1.33.1 // indirect
+	k8s.io/kubernetes v1.33.6 // indirect
 	k8s.io/utils v0.0.0-20250604170112-4c0f3b243397 // indirect
 	sigs.k8s.io/cluster-api v1.10.3 // indirect
 	sigs.k8s.io/json v0.0.0-20241014173422-cfa47c3a1cc8 // indirect
@@ -84,3 +84,4 @@ require (
 	sigs.k8s.io/structured-merge-diff/v4 v4.7.0 // indirect
 	sigs.k8s.io/yaml v1.5.0 // indirect
 )
+replace k8s.io/kubernetes => k8s.io/kubernetes v1.33.6
