@@ -1,6 +1,6 @@
 module github.com/joeyloman/guestcluster-quota-webhook
 
-go 1.24.13
+go 1.25.9
 
 replace k8s.io/client-go => k8s.io/client-go v0.27.6
 
