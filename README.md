@@ -68,10 +68,10 @@ The following components need to be installed/configured to use the guestcluster
 
 ## Building the container
 
-There is a Dockerfile in the current directory which can be used to build the container, for example:
+There is a Dockerfile in the `build` directory which can be used to build the container, for example:
 
 ```SH
-[docker|podman] build -t <DOCKER_REGISTRY_URI>/guestcluster-quota-webhook:latest .
+[docker|podman] build -f build/Dockerfile -t <DOCKER_REGISTRY_URI>/guestcluster-quota-webhook:latest .
 ```
 
 Then push it to the remote container registry target, for example:

@@ -213,7 +213,7 @@ spec:
     spec:
       containers:
       - name: guestcluster-quota-webhook
-        image: ghcr.io/joeyloman/guestcluster-quota-webhook:latest
+        image: ghcr.io/joeyloman/guestcluster-quota-webhook:v0.6.4
         env:
           - name: KUBENAMESPACE
             value: guestcluster-quota-webhook
