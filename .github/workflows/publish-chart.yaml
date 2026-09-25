@@ -5,7 +5,8 @@ on:
     branches:
       - main
     paths:
-      - 'deployments/charts/guestcluster-quota-webhook/Chart.yaml'
+      - 'deployments/charts/guestcluster-quota-webhook/**'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -22,32 +23,30 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
         with:
           version: v3.16.3
 
-      - name: Skip if the chart version did not change
-        id: version
+      - name: Log in to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GITHUB_TOKEN" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Check whether this chart version is already published
+        id: published
         run: |
-          NEW_VERSION=$(awk '/^version:/ {print $2}' $CHART_PATH/Chart.yaml)
-          OLD_VERSION=$(git show HEAD^:$CHART_PATH/Chart.yaml | awk '/^version:/ {print $2}')
-          echo "new=$NEW_VERSION old=$OLD_VERSION"
-          if [ "$NEW_VERSION" = "$OLD_VERSION" ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
+          VERSION=$(awk '/^version:/ {print $2}' $CHART_PATH/Chart.yaml)
+          echo "version=$VERSION"
+          if helm pull oci://$OCI_REGISTRY/guestcluster-quota-webhook --version "$VERSION" -d /tmp >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
           else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "already=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Log in to GHCR
-        if: steps.version.outputs.changed == 'true'
-        run: helm registry login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
-
       - name: Package and push the chart as an OCI artifact
-        if: steps.version.outputs.changed == 'true'
+        if: steps.published.outputs.already == 'false'
         run: |
           helm lint $CHART_PATH
           helm package $CHART_PATH
