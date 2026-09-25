@@ -2,6 +2,8 @@ apiVersion: v2
 name: guestcluster-quota-webhook
 description: A Helm chart for Kubernetes
 
+# Published as an OCI artifact to oci://ghcr.io/joeyloman/charts by
+# .github/workflows/publish-chart.yaml on every version bump.
 # A chart can be either an 'application' or a 'library' chart.
 #
 # Application charts are a collection of templates that can be packaged into versioned archives
