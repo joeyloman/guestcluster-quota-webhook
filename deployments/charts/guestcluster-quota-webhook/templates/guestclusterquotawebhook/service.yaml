@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "guestcluster-quota-webhook.fullname" . }}
+  namespace: {{ .Release.Namespace | default "kube-system" }}
+  labels:
+    {{- include "guestcluster-quota-webhook.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "guestcluster-quota-webhook.selectorLabels" . | nindent 8 }}
+  ports:
+    - name: webhook
+      port: {{ .Values.guestclusterquotawebhook.service.webhookServicePort }}
+      protocol: TCP
+      targetPort: {{ .Values.guestclusterquotawebhook.service.webhookListenPort }}
+  sessionAffinity: None
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "guestcluster-quota-webhook.fullname" . }}-metrics
+  namespace: {{ .Release.Namespace | default "kube-system" }}
+  labels:
+    {{- include "guestcluster-quota-webhook.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "guestcluster-quota-webhook.selectorLabels" . | nindent 8 }}
+  ports:
+    - name: metrics
+      port: {{ .Values.guestclusterquotawebhook.service.metricsServicePort }}
+      protocol: TCP
+      targetPort: {{ .Values.guestclusterquotawebhook.service.metricsListenPort }}
+  sessionAffinity: None
+  type: ClusterIP

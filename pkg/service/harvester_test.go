@@ -15,7 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 
-	ippoolv1 "github.com/joeyloman/kubevirt-ip-helper/pkg/apis/iphelper.kubevirt.io/v1"
+	ippoolv1 "github.com/joeyloman/kubevirt-ip-helper/pkg/apis/kubevirtiphelper.k8s.binbash.org/v1"
 )
 
 func TestCheckMachinePools(t *testing.T) {
@@ -395,7 +395,7 @@ func TestGetIPPoolFromHarvester(t *testing.T) {
 						NetworkName: "default/test-network",
 					},
 					Status: ippoolv1.IPPoolStatus{
-						IPv4: ippoolv1.IPVersionStatus{
+						IPv4: ippoolv1.IPv4Status{
 							Available: 10,
 						},
 					},

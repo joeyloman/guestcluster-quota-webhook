@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "guestcluster-quota-webhook.fullname" . }}
+  namespace: {{ .Release.Namespace | default "kube-system" }}
+  labels:
+    {{- include "guestcluster-quota-webhook.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.guestclusterquotawebhook.autoscaling.enabled }}
+  replicas: {{ .Values.guestclusterquotawebhook.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "guestcluster-quota-webhook.selectorLabels" . | nindent 6 }}
+  progressDeadlineSeconds: 600
+  revisionHistoryLimit: 10
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      {{- with .Values.guestclusterquotawebhook.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "guestcluster-quota-webhook.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.guestclusterquotawebhook.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.guestclusterquotawebhook.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.guestclusterquotawebhook.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      dnsPolicy: ClusterFirst
+      {{- with .Values.guestclusterquotawebhook.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "guestcluster-quota-webhook.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.guestclusterquotawebhook.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.guestclusterquotawebhook.securityContext | nindent 12 }}
+          image: "{{ .Values.guestclusterquotawebhook.image.repository }}:{{ .Values.guestclusterquotawebhook.image.tag | default .Chart.AppVersion }}"
+          {{- with .Values.guestclusterquotawebhook.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          imagePullPolicy: {{ .Values.guestclusterquotawebhook.image.pullPolicy }}
+          resources:
+            {{- toYaml .Values.guestclusterquotawebhook.resources | nindent 12 }}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File

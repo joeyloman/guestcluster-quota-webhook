@@ -1,0 +1,65 @@
+{{- if .Values.guestclusterquotawebhook.serviceAccount.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "guestcluster-quota-webhook.fullname" . }}
+  namespace: {{ .Release.Namespace | default "kube-system" }}
+  labels:
+    {{- include "guestcluster-quota-webhook.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "guestcluster-quota-webhook.fullname" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "guestcluster-quota-webhook.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace | default "kube-system" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "guestcluster-quota-webhook.fullname" . }}-cabundle
+  namespace: "kube-system"
+  labels:
+    {{- include "guestcluster-quota-webhook.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "guestcluster-quota-webhook.fullname" . }}-cabundle
+subjects:
+- kind: ServiceAccount
+  name: {{ include "guestcluster-quota-webhook.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace | default "kube-system" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "guestcluster-quota-webhook.fullname" . }}-kubeconfig-read
+  namespace: fleet-default
+  labels:
+    {{- include "guestcluster-quota-webhook.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "guestcluster-quota-webhook.fullname" . }}-kubeconfig-read
+subjects:
+- kind: ServiceAccount
+  name: {{ include "guestcluster-quota-webhook.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace | default "kube-system" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "guestcluster-quota-webhook.fullname" . }}-cc-read
+  namespace: cattle-global-data
+  labels:
+    {{- include "guestcluster-quota-webhook.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "guestcluster-quota-webhook.fullname" . }}-cc-read
+subjects:
+- kind: ServiceAccount
+  name: {{ include "guestcluster-quota-webhook.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace | default "kube-system" }}
+{{- end }}

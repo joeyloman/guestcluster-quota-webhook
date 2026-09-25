@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubevirt-ip-helper-ip-reservations
+  namespace: {{ .Release.Namespace | default "kube-system" }}
+{{- if .Values.guestclusterquotawebhook.kubevirtIpHelperIpReservations }}
+data:
+  {{- range .Values.guestclusterquotawebhook.kubevirtIpHelperIpReservations }}
+  {{ .clusterName }}_{{ .networkNamespace }}_{{ .networkName }}: "{{ .count }}"
+  {{- end }}
+{{- end }}
