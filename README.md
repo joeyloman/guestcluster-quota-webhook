@@ -82,6 +82,22 @@ Then push it to the remote container registry target, for example:
 
 ## Deploying the container
 
+### Installing with Helm
+
+The chart is published as an OCI artifact to `ghcr.io/joeyloman/charts`. Install it with:
+
+```SH
+helm install guestcluster-quota-webhook oci://ghcr.io/joeyloman/charts/guestcluster-quota-webhook --version 0.6.4
+```
+
+To use custom values, create a values file and pass it to the install command:
+
+```SH
+helm install guestcluster-quota-webhook oci://ghcr.io/joeyloman/charts/guestcluster-quota-webhook --version 0.6.4 --values my-values.yaml
+```
+
+### Installing with the deployment manifest
+
 Use the deployment.yaml template which is located in the templates directory, for example:
 
 ```SH
